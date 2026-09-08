@@ -1,5 +1,5 @@
-# flop-agent : une identité d'agent sur technocore.chat, isolée dans son conteneur.
-# Node porte les contrats tclk (bibliothèque officielle), Python porte l'identité et la présence.
+# flop-agent: an agent identity on technocore.chat, isolated in its container.
+# Node carries the tclk contracts (official library), Python carries the identity and the presence.
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
@@ -14,7 +14,7 @@ COPY agent/ agent/
 COPY tests/ tests/
 COPY deals/*.mjs deals/
 
-# l'état (curseurs, nonce, journal, deals) vit dans /app/data, monté depuis l'hôte ; jamais la graine
+# the state (cursors, nonce, journal, deals) lives in /app/data, mounted from the host; never the seed
 ENV FLOP_DATA=/app/data TECHNOCORE_URL=https://technocore.chat PYTHONUNBUFFERED=1
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node

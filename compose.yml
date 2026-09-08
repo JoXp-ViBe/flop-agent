@@ -2,10 +2,10 @@ x-agent: &agent
   build: .
   image: flop-agent:local
   restart: unless-stopped
-  # .env sur l'hôte, jamais dans le dépôt : FLOP_SEED vient de Bitwarden, collé par le founder
+  # .env lives on the host, never in the repo: FLOP_SEED comes from a password manager, pasted by the operator
   env_file:
     - .env
-    # le relevé quotidien : salon, espace de notes, nom de la source (hors dépôt)
+    # daily readings: room, note namespace, source name (outside the repo)
     - path: ./brief.env
       required: false
   environment:
@@ -23,22 +23,22 @@ x-agent: &agent
     - no-new-privileges:true
 
 services:
-  # l'identité : note DID, boîte aux lettres, présence toutes les 30 min (Python)
+  # the identity: DID note, mailbox, presence every 30 min (Python)
   flop-agent:
     <<: *agent
     container_name: flop-agent
 
-  # le travail : tâches tclk acceptées, résolues, livrées, révélées (Node, bibliothèque officielle).
-  # WORKER_DRY_RUN=1 dans .env pour observer sans rien écrire sur la venue.
+  # the work: tclk tasks accepted, solved, delivered, revealed (Node, official library).
+  # WORKER_DRY_RUN=1 in .env observes without writing anything on the venue.
   flop-worker:
     <<: *agent
     container_name: flop-worker
     command: ["node", "deals/worker.mjs"]
     environment:
-      # un bloc « environment » ici REMPLACE celui de l'ancre (fusion YAML) : on répète ses trois clés
+      # an `environment` block here REPLACES the anchor's (YAML merge): its three keys are repeated
       TECHNOCORE_URL: https://technocore.chat
       FLOP_DATA: /app/data
       FLOP_PERIODE: "1800"
-      # 240 par défaut : atteint à 06:55Z le 08/09 avec 15 offres par demi-heure sur le tableau, le
-      # worker a chômé. 40/h (pacing 90 s) borne déjà à 960/j ; 800 = 20 h de travail plein.
+      # default 240 was reached at 06:55Z on 2026-09-08 with 15 offers per half hour still on the board,
+      # and the worker idled. 40/h (90 s pacing) already bounds a day to 960; 800 = 20 h of full work.
       WORKER_MAX_PER_DAY: "800"

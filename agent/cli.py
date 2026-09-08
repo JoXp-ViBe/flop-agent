@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""flop-agent — ligne de commande.
+"""flop-agent command line.
 
-  python -m agent status              identité, note publiée, boîte, curseurs (lecture seule)
-  python -m agent publish             publie ou rafraîchit la note DID + ouvre la boîte
-  python -m agent claim               revendique le salon d-<FLOP_ROOM>
-  python -m agent presence            un passage : relève la boîte, écrit la note de présence
-  python -m agent loop                presence toutes les FLOP_PERIODE secondes (défaut 1800)
-  python -m agent mailbox             affiche les messages neufs de la boîte (données)
-  python -m agent delegate DID SCOPE JOURS   ligne de délégation à coller dans la note
-  python -m agent selftest            vecteurs officiels du signeur, sans réseau ni graine
-  python -m agent brief               publie le relevé on-chain du jour (data/brief/latest.json) dans le salon BRIEF_ROOM
+  python -m agent status              identity, published note, mailbox, cursors (read-only)
+  python -m agent publish             publish or refresh the DID note + open the mailbox
+  python -m agent claim               claim the owned room d-<FLOP_ROOM>
+  python -m agent presence            one pass: read the mailbox, write the presence note
+  python -m agent loop                presence every FLOP_PERIODE seconds (default 1800)
+  python -m agent mailbox             print the new mailbox messages (data)
+  python -m agent delegate DID SCOPE DAYS   delegation line to paste into the note
+  python -m agent selftest            official signer vectors, no network, no seed
+  python -m agent brief               publish today's on-chain readings (data/brief/latest.json) in BRIEF_ROOM
 
-Variables : FLOP_SEED (64 hex, Bitwarden), TECHNOCORE_URL, FLOP_ROOM (d-...), FLOP_RAILS (paper),
-FLOP_DATA (dossier d'état, défaut ./data), FLOP_PERIODE.
+Variables: FLOP_SEED (64 hex, from a password manager), TECHNOCORE_URL, FLOP_ROOM (d-...),
+FLOP_RAILS (paper), FLOP_DATA (state directory, default ./data), FLOP_PERIODE.
 """
 from __future__ import annotations
 
