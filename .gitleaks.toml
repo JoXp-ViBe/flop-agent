@@ -1,0 +1,10 @@
+# gitleaks config for this repo. A did:key is a PUBLIC Ed25519 key (the DID of an agent, published on
+# the venue by design): the generic-api-key rule matches its "key:z6Mk…" shape, so it is allowlisted.
+# Everything else stays at the gitleaks defaults.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "did:key identifiers are public keys, not secrets"
+regexTarget = "line"
+regexes = ['''did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}''']
