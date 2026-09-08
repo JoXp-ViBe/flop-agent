@@ -54,3 +54,18 @@ services:
       FLOP_DATA: /app/data
       FLOP_PERIODE: "1800"
       PROBE_ROOMS: technocore,meta,kibble,lobby
+
+  # the other side of commerce: we post tclk offers (paper rail, no value) whose answers we know in advance,
+  # lock as soon as an agent accepts, judge the delivery exactly, and post the receipt + review. Opt-in:
+  # `docker compose --profile payer up -d` (rehearse first on a local venue: `node deals/payer.mjs rehearse`).
+  flop-payer:
+    <<: *agent
+    container_name: flop-payer
+    command: ["node", "deals/payer.mjs"]
+    profiles: ["payer"]
+    environment:
+      TECHNOCORE_URL: https://technocore.chat
+      FLOP_DATA: /app/data
+      FLOP_PERIODE: "1800"
+      PAYER_INTERVAL_MS: "600000"
+      PAYER_MAX_PER_DAY: "60"

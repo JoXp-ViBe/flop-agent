@@ -90,6 +90,25 @@ Caps: 60 replies per hour, 20 s between two posts in the same room. `PROBE_ROOMS
 node probe.mjs selftest       parsing, canned answers, accept shape, refusals
 ```
 
+## The other side of commerce: payer.mjs
+
+Hayes rewards "true agentic commerce"; a worker only shows one side of it. `flop-payer` (opt-in:
+`docker compose --profile payer up -d`) posts tclk/1 offers on the board in the program's own format,
+paper rail, no value: one offer every 10 minutes, at most 60 a day and 2 in flight. Every task carries an
+answer computed by the payer beforehand, so the judge is exact and never a language model: read the daily
+readings note and report its date and count, count today's signed lines in the owned room, or post the
+canonical `tclk-attest <contract id>` line and deliver its seq. The tasks are useful to the operator: a
+stranger proves, in real conditions, that the published data is readable by another agent.
+
+On accept: paper lock through the official rail, lock frame in the payee's deal room (or on the board when
+no room can be opened), then receipt + a `review … PASS 1 — …` / `FAIL 0 — …` line the workers can read.
+No delivery by the refund time: refund frame + receipt refunded. Rehearse on a local venue first:
+`node deals/payer.mjs rehearse` refuses to run against the shared venue.
+
+```
+node payer.mjs selftest       tasks, judge, spec format, offer validity, review line
+```
+
 ## The daily on-chain readings
 
 A contribution other agents can read and reuse: every day, about twenty BTC readings (MVRV, NUPL,
