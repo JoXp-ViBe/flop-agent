@@ -45,6 +45,10 @@ export const REGLAGES = {
   // cadence : le plafond horaire se lisse sur l'heure au lieu d'être consommé en trois minutes
   // (mesuré le 08/09 : 40 accepts entre 00:30 et 00:33, puis rien jusqu'à 01:00)
   ecartMs: entier("WORKER_MIN_GAP_S", 0) * 1000,
+  // le budget de création de salons de la venue est par IP et par heure glissante (mesuré le 08/09 : 328 salons
+  // ouverts dans la journée, refus « room-creation budget spent » avec retry-after ≈ 27 min) ; le payeur, même IP,
+  // a besoin d'un salon par offre : le worker en laisse quelques-uns
+  maxSalonsHeure: entier("WORKER_ROOMS_PER_HOUR", 17),
 };
 if (!REGLAGES.ecartMs && REGLAGES.maxHeure > 0) REGLAGES.ecartMs = Math.floor(3600_000 / REGLAGES.maxHeure);
 const ETAT = join(DATA_DIR, "worker.json");
@@ -66,6 +70,12 @@ export function noterRefusSalon(detail, now = Date.now()) {
   if (jusqua > salonsBloquesJusqua) { salonsBloquesJusqua = jusqua; journal("salons_bloques", { jusqua: new Date(jusqua).toISOString(), secondes }); }
   return true;
 }
+/** Reste-t-il de la place dans notre part du budget horaire de salons ? (heure glissante) */
+export function peutOuvrirSalon(etat, now = Date.now(), max = REGLAGES.maxSalonsHeure) {
+  etat.salonsOuverts = (etat.salonsOuverts ?? []).filter((t) => now - t < 3600_000);
+  return etat.salonsOuverts.length < max;
+}
+
 export function suspendue(famille) {
   if (Date.now() - suspCache.ts > 60_000) {
     suspCache = { ts: Date.now(), familles: new Set() };
@@ -255,8 +265,11 @@ async function menerDeal(deal, signer, etat) {
   try {
     // 1. le salon du deal existe dès notre heartbeat (ou dès le verrou du payeur si notre IP a épuisé ses salons du jour)
     // jamais de réessai ici : quota de salons épuisé = 429 immédiat, et c'est le payeur qui ouvre le salon
-    try { await postText(signer, room, heartbeatLine(signer.did, contract), { retries: 0 }); journal("heartbeat", { contract }); }
-    catch (e) { const msg = String(e.message ?? e); journal("heartbeat_refuse", { contract, detail: msg.slice(0, 160) }); noterRefusSalon(msg); }
+    if (!peutOuvrirSalon(etat)) journal("heartbeat_reserve", { contract, ouverts: etat.salonsOuverts.length });
+    else {
+      try { await postText(signer, room, heartbeatLine(signer.did, contract), { retries: 0 }); etat.salonsOuverts.push(Date.now()); journal("heartbeat", { contract }); }
+      catch (e) { const msg = String(e.message ?? e); journal("heartbeat_refuse", { contract, detail: msg.slice(0, 160) }); noterRefusSalon(msg); }
+    }
 
     // 2. la réponse, calculée maintenant : si elle échoue, on se retire proprement (cancel avant tout verrou)
     let reponse = deal.reponse ?? null;
@@ -470,6 +483,8 @@ function selftest() {
   ok("refus de salon 429 → blocage noté", noterRefusSalon("post to mb-p-tclk-x: rate limited (retry-after 3714s): 429 429 room-creation quota", now) && salonsBloquesJusqua === now + 3714 * 1000);
   ok("refus 400 plafond global → 15 min", noterRefusSalon("post to mb-p-tclk-y: 400 400 room limit reached (163840 is the cap)", now + 10_000_000) && salonsBloquesJusqua === now + 10_000_000 + 900 * 1000);
   ok("autre refus → rien", !noterRefusSalon("post to mb-p-tclk-z: 422 duplicate", now));
+  const es = { salonsOuverts: Array.from({ length: 17 }, (_, i) => now - i * 60_000) };
+  ok("réserve de salons : 17 ouverts dans l'heure → non ; les plus vieux qu'une heure sortent → oui", !peutOuvrirSalon(es, now, 17) && peutOuvrirSalon({ salonsOuverts: Array.from({ length: 17 }, (_, i) => now - 3600_001 - i) }, now, 17) && peutOuvrirSalon(es, now, 18));
   ok("attest refusée tant que les salons sont bloqués", planifier(parseSpec("attest | [difficulty 1/3] Post a signed line in the deal room then report its seq | reward tier 1/5 | done looks like: attested seq <seq>"), { did: "did:key:z6MkMoi" }) === null);
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;

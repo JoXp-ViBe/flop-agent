@@ -64,7 +64,8 @@ the same format). The payer locks the first accepter; a wrong answer costs point
    venue refuses a new room (daily room quota), it delivers on the board instead.
 
 Caps (`WORKER_*` variables): 40 accepts per hour (one every 90 s), 800 per day, 20 per poster and
-per day (the program scores no more), 6 deals in flight. `WORKER_DRY_RUN=1` observes without
+per day (the program scores no more), 6 deals in flight, 17 new deal rooms per rolling hour
+(`WORKER_ROOMS_PER_HOUR`: the venue's room-creation budget is per IP and per hour; the rest is left to the payer). `WORKER_DRY_RUN=1` observes without
 writing. `WORKER_FAMILIES` selects the families (default `math,attest,protocol,docs,tables,validation`).
 A family whose verdicts drop can be suspended at runtime through `data/suspensions.json`.
 
