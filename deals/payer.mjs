@@ -18,11 +18,11 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 import {
-  OFFER_ROOM, PaperRail, applyFrame, dealRoom, lockTerms, makeOffer, openContract,
+  OFFER_ROOM, PaperRail, applyFrame, dealRoom, generateHashLock, lockTerms, makeAccept, makeOffer, openContract,
 } from "@flop-labs/tclk";
 import { DATA_DIR, signerFromEnv, verifyRecord } from "./signing.mjs";
 import {
-  BASE, authenticate, journal, log, noteAtPath, notes, post, postText, readSince, requireLocalVenue,
+  BASE, authenticate, exportRoom, journal, log, noteAtPath, notes, post, postText, readSince, requireLocalVenue,
 } from "./venue.mjs";
 
 const entier = (nom, defaut) => { const v = Number(process.env[nom]); return Number.isFinite(v) && v >= 0 ? v : defaut; };
@@ -86,12 +86,14 @@ export function specTexte(t) {
 export function normaliser(s) {
   return String(s ?? "").replace(/^[\s"'`]+|[\s"'`.]+$/g, "").replace(/\s+/g, " ").toLowerCase();
 }
-export function juger(tache, livraison, salonRecords = [], payee = "", contract = "") {
+export function juger(tache, livraison, salonRecords = [], payee = "", contract = "", salonLivraison = null) {
   if (tache.famille === "attest") {
     const m = /attested seq (\d+)/i.exec(livraison ?? "");
     if (!m) return { pass: false, motif: "delivery does not name a seq" };
     const seq = Number(m[1]);
-    const ligne = salonRecords.find((r) => r.from === payee && Number(r.seq) === seq);
+    // les seq sont propres à chaque salon : la ligne attestée vit là où la livraison a été faite
+    const candidats = salonRecords.filter((r) => r.from === payee && Number(r.seq) === seq);
+    const ligne = candidats.find((r) => !salonLivraison || !r.room || r.room === salonLivraison) ?? candidats[0];
     if (!ligne) return { pass: false, motif: `no line with seq ${seq} signed by the payee in the deal room` };
     const attendu = `tclk-attest ${contract}`;
     return String(ligne.text ?? "").trim() === attendu
@@ -153,7 +155,7 @@ async function poster(signer, etat) {
   log("", `offre ${offer.id.slice(0, 12)} · ${tache.famille}`);
 }
 
-// ----- le suivi d'un deal accepté ---------------------------------------------------------------------
+// ----- le verrou -------------------------------------------------------------------------------------
 async function salonExiste(room) { return (await readSince(room, 0, 0)).records.length > 0; }
 
 async function verrouiller(signer, d, accept) {
@@ -169,68 +171,142 @@ async function verrouiller(signer, d, accept) {
   await post(signer, salon, frame);
   state = applyFrame(state, frame, Date.now()).state;
   d.contract = accept.frame.contract; d.payee = accept.frame.from; d.room = room; d.ref = ref; d.lockSalon = salon;
-  d.state = state; d.etape = "verrouille"; d.since = 0;
+  d.state = state; d.etape = "verrouille"; d.since = 0; d.lockAt = Date.now();
   journal("payer_lock", { contract: d.contract, payee: d.payee, salon });
 }
 
+// ----- ce que le payé écrit, dans son salon ou sur le tableau ----------------------------------------
+// Mesuré le 08/09/2026 en production : les payés n'ouvrent presque jamais de salon (plafond global de
+// salons de la venue) ; ils livrent et révèlent sur le tableau, ou réclament le rail sans rien poster.
+// Le suivi lit donc les deux endroits, et le rattrapage relit l'anneau d'export du tableau au démarrage.
+
+/** Mémoire du deal : un record par (salon, seq), bornée. Rend false si déjà vu. */
+function retenir(d, r) {
+  d.tousRecords = d.tousRecords ?? [];
+  if (d.tousRecords.some((x) => x.room === r.room && Number(x.seq) === Number(r.seq))) return false;
+  d.tousRecords = d.tousRecords.concat([{ from: r.from, seq: r.seq, text: r.text, room: r.room }]).slice(-200);
+  return true;
+}
+
+/**
+ * Absorbe un record du payé (signature déjà vérifiée par l'appelant, `a` = authenticate(r)).
+ * Une ligne en clair est une livraison candidate ; un frame reveal valide révèle. Sur le tableau le payé
+ * sert aussi d'autres payeurs : une ligne égale à la réponse attendue prime ; sinon la DERNIÈRE ligne en
+ * clair avant le reveal (mesuré en répétition : pour une attestation, la première ligne est
+ * « tclk-attest <contract> », la livraison vient après). Rend "livraison", "reveal" ou null.
+ */
+export function absorber(d, r, a) {
+  if (r.from !== d.payee || !retenir(d, r)) return null;
+  if (!a.frame) {
+    const txt = String(r.text ?? "");
+    if (d.reveal || txt.startsWith("tclk1 ") || txt.startsWith("tclk-attest ")) return null;
+    const exact = d.tache.reponse != null && normaliser(txt) === normaliser(d.tache.reponse);
+    if (!exact && d.livraisonExacte) return null;
+    d.livraison = txt; d.livraisonSeq = r.seq; d.livraisonSalon = r.room; d.livraisonExacte = exact;
+    return "livraison";
+  }
+  if (a.reason !== null || a.frame.type !== "reveal" || a.frame.contract !== d.contract || d.reveal) return null;
+  const res = applyFrame(d.state, a.frame, Date.parse(r.ts ?? "") || Date.now());
+  if (!res.ok) { journal("payer_reveal_refuse", { contract: d.contract, reason: res.reason }); return null; }
+  d.state = res.state; d.reveal = a.frame.secret; d.revealSalon = r.room;
+  return "reveal";
+}
+
+/** Un record du tableau concerne-t-il ce deal ? (le payé, depuis le verrou, marge 10 s) */
+export function pertinent(d, r) {
+  if (r.from !== d.payee) return false;
+  const ts = Date.parse(r.ts ?? "");
+  return !(Number.isFinite(ts) && d.lockAt && ts < d.lockAt - 10_000);
+}
+
+/** L'issue d'un deal verrouillé à l'instant now. */
+export function decision(d, now) {
+  if (d.livraison && d.reveal) return "juger";
+  if (d.reveal && now >= d.offer.claimByMs) return "reveal_sans_livraison";
+  if (now >= d.offer.refundAfterMs) return "refund";
+  return "attendre";
+}
+
+async function absorberSalon(d, salon, records) {
+  for (const r of records) {
+    if (r.from !== d.payee || !verifyRecord(salon, r)) continue;
+    const rec = { ...r, room: salon };
+    const quoi = absorber(d, rec, authenticate(rec));
+    if (quoi) journal("payer_" + quoi, { contract: d.contract, salon, seq: r.seq });
+  }
+}
+
+/** Le reçu (la vérité du rail : claimed) puis la revue lisible par les workers ; le deal est clos. */
+async function conclure(signer, etat, id, d, verdict) {
+  // le rail papier : le payé a normalement déjà réclamé ; on ne réclame que si le registre est encore verrouillé
+  const rail = new PaperRail(notes);
+  try {
+    const rec = await rail.read(d.ref);
+    if (rec && rec.status !== "claimed" && d.reveal) await rail.claim(d.ref, d.reveal);
+  } catch (e) { journal("payer_rail", { contract: d.contract, detail: String(e.message ?? e).slice(0, 120) }); }
+  const salon = d.lockSalon;
+  await post(signer, salon, { type: "receipt", from: signer.did, contract: d.contract, outcome: "claimed", rail: "paper", ref: d.ref });
+  const reviewId = "0x" + randomBytes(8).toString("hex");
+  await postText(signer, salon, ligneRevue(reviewId, d.contract, d.payee, verdict));
+  etat.stats[verdict.pass ? "pass" : "fail"] += 1;
+  journal("payer_verdict", { contract: d.contract, payee: d.payee, pass: verdict.pass, motif: verdict.motif, livraison: d.livraison == null ? null : String(d.livraison).slice(0, 120), salon: d.livraisonSalon ?? d.revealSalon ?? null, attendu: d.tache.reponse });
+  log("", `verdict ${verdict.pass ? "PASS" : "FAIL"} · ${d.contract.slice(0, 12)} · ${String(d.livraison ?? "(no delivery)").slice(0, 60)}`);
+  delete etat.actifs[id];
+}
+
+// ----- le suivi d'un deal accepté ---------------------------------------------------------------------
 async function suivre(signer, etat, id, d) {
   const now = Date.now();
   if (d.etape === "offerte") {
     if (now > d.offer.expiresMs) { journal("payer_expiree", { id }); delete etat.actifs[id]; return; }
     return; // l'accept est détecté dans la boucle du tableau
   }
-  // verrouillé : on lit le salon du deal (et le tableau, variante) pour la livraison + le reveal
+  // verrouillé : le salon du deal ici, le tableau dans la boucle → livraison + reveal
   const vue = await readSince(d.room, d.since ?? 0, 0);
   d.since = vue.lastSeq;
-  // mémoire du salon à chaque passe (le juge attest relit une ligne vue à une passe antérieure)
-  d.tousRecords = (d.tousRecords ?? []).concat(vue.records.map((r) => ({ from: r.from, seq: r.seq, text: r.text }))).slice(-200);
-  const recs = vue.records.filter((r) => r.from === d.payee);
-  for (const r of recs) {
-    // la livraison est une ligne signée en clair (pas un frame) ; un heartbeat est un frame inconnu « tclk1 … »
-    if (!verifyRecord(d.room, r)) continue;
-    const a = authenticate(r);
-    if (!a.frame) {
-      // la livraison = la DERNIÈRE ligne en clair du payé avant son reveal (mesuré en répétition : pour une
-      // attestation, la première ligne est « tclk-attest <contract> », la livraison vient après)
-      const txt = String(r.text ?? "");
-      if (!d.reveal && !txt.startsWith("tclk1 ") && !txt.startsWith("tclk-attest ")) { d.livraison = txt; d.livraisonSeq = r.seq; }
-      continue;
+  await absorberSalon(d, d.room, vue.records);
+  switch (decision(d, now)) {
+    case "juger":
+      return conclure(signer, etat, id, d, juger(d.tache, d.livraison, d.tousRecords, d.payee, d.contract, d.livraisonSalon));
+    case "reveal_sans_livraison":
+      return conclure(signer, etat, id, d, { pass: false, motif: "reveal seen but no delivery line, in the deal room or on the board" });
+    case "refund": {
+      const rail = new PaperRail(notes);
+      let rec = null;
+      try { rec = await rail.read(d.ref); } catch (e) { journal("payer_rail", { contract: d.contract, detail: String(e.message ?? e).slice(0, 120) }); }
+      if (rec && rec.status === "claimed") {
+        // réclamé sur le rail sans reveal vu ni livraison : le reçu dit la vérité du rail, la revue dit FAIL
+        d.reveal = d.reveal ?? rec.secret ?? null;
+        return conclure(signer, etat, id, d, { pass: false, motif: "paper claimed by the payee without a delivery line" });
+      }
+      try { await rail.refund(d.ref); } catch (e) { journal("payer_rail", { contract: d.contract, detail: String(e.message ?? e).slice(0, 120) }); }
+      const salon = d.lockSalon;
+      await post(signer, salon, { type: "refund", from: signer.did, contract: d.contract });
+      await post(signer, salon, { type: "receipt", from: signer.did, contract: d.contract, outcome: "refunded", rail: "paper", ref: d.ref });
+      etat.stats.refund += 1;
+      journal("payer_refund", { contract: d.contract, payee: d.payee, livraison: !!d.livraison, reveal: !!d.reveal });
+      delete etat.actifs[id];
+      return;
     }
-    if (a.reason !== null) continue;
-    if (a.frame.type === "reveal" && !d.reveal) {
-      const res = applyFrame(d.state, a.frame, Date.parse(r.ts) || Date.now());
-      if (res.ok) { d.state = res.state; d.reveal = a.frame.secret; }
-      else journal("payer_reveal_refuse", { contract: d.contract, reason: res.reason });
-    }
+    default:
+      return;
   }
-  if (d.livraison && d.reveal) {
-    const verdict = juger(d.tache, d.livraison, d.tousRecords, d.payee, d.contract);
-    // le rail papier : le payé a normalement déjà réclamé ; on ne réclame que si le registre est encore verrouillé
-    const rail = new PaperRail(notes);
-    try {
-      const rec = await rail.read(d.ref);
-      if (rec && rec.status !== "claimed") await rail.claim(d.ref, d.reveal);
-    } catch (e) { journal("payer_rail", { contract: d.contract, detail: String(e.message ?? e).slice(0, 120) }); }
-    const salon = d.lockSalon;
-    await post(signer, salon, { type: "receipt", from: signer.did, contract: d.contract, outcome: "claimed", rail: "paper", ref: d.ref });
-    const reviewId = "0x" + randomBytes(8).toString("hex");
-    await postText(signer, salon, ligneRevue(reviewId, d.contract, d.payee, verdict));
-    etat.stats[verdict.pass ? "pass" : "fail"] += 1;
-    journal("payer_verdict", { contract: d.contract, payee: d.payee, pass: verdict.pass, motif: verdict.motif, livraison: String(d.livraison).slice(0, 120), attendu: d.tache.reponse });
-    log("", `verdict ${verdict.pass ? "PASS" : "FAIL"} · ${d.contract.slice(0, 12)} · ${String(d.livraison).slice(0, 60)}`);
-    delete etat.actifs[id];
-    return;
+}
+
+/** Au démarrage : ce que les payés des deals verrouillés ont écrit sur le tableau pendant notre absence (anneau d'export, ~30 min). */
+async function rattraper(etat) {
+  const actifs = Object.values(etat.actifs).filter((d) => d.etape === "verrouille");
+  if (!actifs.length) return;
+  let ring;
+  try { ring = await exportRoom(OFFER_ROOM); }
+  catch (e) { journal("payer_rattrapage_refuse", { detail: String(e.message ?? e).slice(0, 120) }); return; }
+  let n = 0;
+  for (const d of actifs) {
+    const avant = (d.livraison ? 1 : 0) + (d.reveal ? 1 : 0);
+    await absorberSalon(d, OFFER_ROOM, ring.filter((r) => pertinent(d, r)));
+    n += (d.livraison ? 1 : 0) + (d.reveal ? 1 : 0) - avant;
   }
-  if (now >= d.offer.refundAfterMs) {
-    const rail = new PaperRail(notes);
-    try { await rail.refund(d.ref); } catch (e) { journal("payer_rail", { contract: d.contract, detail: String(e.message ?? e).slice(0, 120) }); }
-    const salon = d.lockSalon;
-    await post(signer, salon, { type: "refund", from: signer.did, contract: d.contract });
-    await post(signer, salon, { type: "receipt", from: signer.did, contract: d.contract, outcome: "refunded", rail: "paper", ref: d.ref });
-    etat.stats.refund += 1;
-    journal("payer_refund", { contract: d.contract, payee: d.payee, livraison: !!d.livraison, reveal: !!d.reveal });
-    delete etat.actifs[id];
-  }
+  journal("payer_rattrapage", { deals: actifs.length, ring: ring.length, absorbes: n });
 }
 
 // ----- la boucle --------------------------------------------------------------------------------------
@@ -239,19 +315,23 @@ async function boucle() {
   const etat = charger();
   if (!etat.since) etat.since = (await readSince(OFFER_ROOM, 0, 0)).lastSeq;
   log("", `payer · ${signer.did.slice(0, 20)}… · ${REGLAGES.dry ? "DRY RUN" : "réel"} · une offre / ${REGLAGES.ecartMs / 60000} min · ${REGLAGES.maxJour}/j · relevé ${REGLAGES.ns || "-"} · salon ${REGLAGES.room || "-"}`);
+  try { await rattraper(etat); } catch (e) { journal("payer_rattrapage_refuse", { detail: String(e.message ?? e).slice(0, 160) }); }
   for (;;) {
     try {
       const now = Date.now();
       fenetre(etat, now);
-      // 1. le tableau : accepts de nos offres
+      // 1. le tableau : ce que nos payés y écrivent, puis les accepts de nos offres
       const vue = await readSince(OFFER_ROOM, etat.since, 3);
       etat.since = vue.lastSeq;
+      const verrouilles = Object.values(etat.actifs).filter((d) => d.etape === "verrouille");
+      for (const d of verrouilles) await absorberSalon(d, OFFER_ROOM, vue.records);
       for (const r of vue.records) {
         const a = authenticate(r);
         if (a.reason !== null || !a.frame || a.frame.type !== "accept") continue;
         const d = etat.actifs[a.frame.ref];
-        if (!d || d.etape !== "offerte" || a.frame.from === signer.did) continue;
-        if (Date.now() > d.offer.expiresMs) continue;
+        if (!d || a.frame.from === signer.did) continue;
+        if (d.etape !== "offerte") { journal("payer_accept_ignore", { id: a.frame.ref, payee: a.frame.from, motif: "already " + d.etape }); continue; }
+        if (Date.now() > d.offer.expiresMs) { journal("payer_accept_ignore", { id: a.frame.ref, payee: a.frame.from, motif: "offer expired" }); continue; }
         try { await verrouiller(signer, d, a); etat.stats.acceptees += 1; journal("payer_accepted", { id: a.frame.ref, contract: a.frame.contract, payee: a.frame.from }); }
         catch (e) { journal("payer_error", { id: a.frame.ref, detail: String(e.message ?? e).slice(0, 160) }); delete etat.actifs[a.frame.ref]; }
       }
@@ -295,6 +375,31 @@ export function selftest() {
   ok("offre valide pour la bibliothèque (claimBy < refundAfter, rail paper, job a2a)", offer.type === "offer" && offer.claimByMs < offer.refundAfterMs && offer.rails.includes("paper") && offer.job.context === spec && offer.id.startsWith("0x"));
   const rev = ligneRevue("0xabc", "0x" + "1".repeat(64), "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S", { pass: true, motif: "exact match" });
   ok("ligne de revue lisible par les workers (review … PASS 1 — …)", /^review 0xabc contract 0x1{16} payee z1xB22S PASS 1 — exact match$/.test(rev) || /^review 0xabc contract 0x1{16} payee [A-Za-z0-9]{8} PASS 1 — exact match$/.test(rev));
+  // absorber : livraison et reveal, dans le salon ou sur le tableau, avec un vrai état de contrat
+  const lock = generateHashLock();
+  const payee = "did:key:z6MkkCR2AgQh8ecL2vMVVbZ7sL92hPpFmceoxpdKh7W1obrj";
+  const acc = makeAccept(offer, { from: payee, statement: lock.hash });
+  let st = applyFrame(openContract(offer), acc, 1_800_000_000_000).state;
+  st = applyFrame(st, { type: "lock", from: signer.did, contract: acc.contract, rail: "paper", ref: acc.contract }, 1_800_000_000_001).state;
+  const d = { payee, contract: acc.contract, state: st, offer, lockAt: 1_800_000_000_001, tache: { famille: "protocol", reponse: "count=3" } };
+  const clair = { frame: null, reason: "pas un frame tclk" };
+  ok("absorber : une ligne en clair du payé = livraison candidate", absorber(d, { from: payee, seq: 1, text: "hello", room: "tclk-offers" }, clair) === "livraison" && d.livraison === "hello");
+  ok("absorber : la ligne égale à la réponse attendue prime, et tient", absorber(d, { from: payee, seq: 2, text: " Count=3 ", room: "tclk-offers" }, clair) === "livraison" && absorber(d, { from: payee, seq: 3, text: "other", room: "tclk-offers" }, clair) === null && d.livraison === " Count=3 ");
+  ok("absorber : un autre signataire est ignoré", absorber(d, { from: "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S", seq: 4, text: "count=3", room: "tclk-offers" }, clair) === null);
+  ok("absorber : tclk-attest n'est pas une livraison mais reste en mémoire", absorber(d, { from: payee, seq: 5, text: "tclk-attest " + acc.contract, room: "tclk-offers" }, clair) === null && d.tousRecords.some((r) => r.seq === 5));
+  ok("absorber : un doublon (salon, seq) est ignoré", absorber(d, { from: payee, seq: 5, text: "tclk-attest " + acc.contract, room: "tclk-offers" }, clair) === null && d.tousRecords.filter((r) => r.seq === 5).length === 1);
+  const ts = new Date(1_800_000_010_000).toISOString();
+  const faux = { frame: { type: "reveal", from: payee, contract: acc.contract, secret: "0x" + "0".repeat(64) }, reason: null };
+  ok("absorber : un reveal au mauvais secret est refusé", absorber(d, { from: payee, seq: 6, text: "tclk1 x", room: "tclk-offers", ts }, faux) === null && !d.reveal);
+  const vrai = { frame: { type: "reveal", from: payee, contract: acc.contract, secret: lock.preimage }, reason: null };
+  ok("absorber : le reveal au bon secret révèle (état officiel)", absorber(d, { from: payee, seq: 7, text: "tclk1 y", room: "tclk-offers", ts }, vrai) === "reveal" && d.reveal === lock.preimage);
+  ok("absorber : après le reveal, plus de livraison", absorber(d, { from: payee, seq: 8, text: "late", room: "tclk-offers" }, clair) === null && d.livraison === " Count=3 ");
+  ok("decision : livraison + reveal → juger", decision(d, 0) === "juger");
+  const o2 = { claimByMs: 100, refundAfterMs: 200 };
+  ok("decision : reveal seul → attendre puis reveal_sans_livraison à claimBy", decision({ reveal: "s", offer: o2 }, 50) === "attendre" && decision({ reveal: "s", offer: o2 }, 100) === "reveal_sans_livraison");
+  ok("decision : rien → attendre puis refund à refundAfter", decision({ offer: o2 }, 150) === "attendre" && decision({ offer: o2 }, 200) === "refund");
+  ok("pertinent : le payé depuis le verrou (marge 10 s), pas avant, pas un autre", pertinent(d, { from: payee, ts: new Date(1_800_000_000_001 - 5_000).toISOString() }) && !pertinent(d, { from: payee, ts: new Date(1_800_000_000_001 - 60_000).toISOString() }) && !pertinent(d, { from: "did:key:z6MkAutre", ts }));
+  ok("juger attest : la ligne attestée est cherchée dans le salon de la livraison", juger(at, "attested seq 5", [{ from: payee, seq: 5, text: "autre", room: "mb-p-x" }, { from: payee, seq: 5, text: "tclk-attest " + C, room: "tclk-offers" }], payee, C, "tclk-offers").pass && !juger(at, "attested seq 5", [{ from: payee, seq: 5, text: "autre", room: "mb-p-x" }, { from: payee, seq: 5, text: "tclk-attest " + C, room: "tclk-offers" }], payee, C, "mb-p-x").pass);
   for (const [n, r] of cas) console.log(`  ${n.padEnd(70)} ${r ? "reussi" : "ECHOUE"}`);
   const e = cas.filter(([, x]) => !x).length; console.log(`selftest payer : ${cas.length - e}/${cas.length}`); return e ? 1 : 0;
 }

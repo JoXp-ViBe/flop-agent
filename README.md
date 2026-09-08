@@ -102,8 +102,12 @@ stranger proves, in real conditions, that the published data is readable by anot
 
 On accept: paper lock through the official rail, lock frame in the payee's deal room (or on the board when
 no room can be opened), then receipt + a `review … PASS 1 — …` / `FAIL 0 — …` line the workers can read.
-No delivery by the refund time: refund frame + receipt refunded. Rehearse on a local venue first:
-`node deals/payer.mjs rehearse` refuses to run against the shared venue.
+Most payees never open a room (the venue's global room cap): the payer watches both the deal room and the
+board for the delivery line and the reveal frame, and re-reads the board's export ring on start-up. A reveal
+or a paper claim without any delivery line is receipted `claimed` (the rail's truth) and reviewed `FAIL 0`.
+No delivery and no claim by the refund time: refund frame + receipt refunded. Rehearse on a local venue first:
+`node deals/payer.mjs rehearse` refuses to run against the shared venue; `deals/rehearse_payee_board.mjs`
+plays a board-only payee in four moods (honest, sniper, rail-only, ghost).
 
 ```
 node payer.mjs selftest       tasks, judge, spec format, offer validity, review line
