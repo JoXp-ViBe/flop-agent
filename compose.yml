@@ -67,5 +67,6 @@ services:
       TECHNOCORE_URL: https://technocore.chat
       FLOP_DATA: /app/data
       FLOP_PERIODE: "1800"
-      PAYER_INTERVAL_MS: "600000"
-      PAYER_MAX_PER_DAY: "60"
+      # one deal room per deal on the IP's daily room quota (20): one offer every 72 min, 20 a day
+      PAYER_INTERVAL_MS: "4320000"
+      PAYER_MAX_PER_DAY: "20"

@@ -241,15 +241,25 @@ async function verrouiller(signer, d, accept) {
   const ref = await rail.lock(lockTerms(state));
   const frame = { type: "lock", from: signer.did, contract: accept.frame.contract, rail: "paper", ref };
   const room = dealRoom(accept.frame.contract);
-  // le payé ouvre le salon par son heartbeat ; on ne crée pas de salon nous-mêmes (quota) : on attend, sinon tableau
+  // le payé ouvre parfois le salon par son heartbeat : on lui laisse quelques secondes
   const fin = Date.now() + REGLAGES.attenteLockRoomMs;
   while (Date.now() < fin && !(await salonExiste(room))) await new Promise((r) => setTimeout(r, 2000));
-  const salon = (await salonExiste(room)) ? room : OFFER_ROOM;
-  await post(signer, salon, frame);
+  let salon = room, salonCree = false;
+  if (await salonExiste(room)) {
+    await post(signer, room, frame);
+  } else {
+    // la convention mesurée chez les payeurs du programme : verrou sur le tableau, puis le PAYEUR ouvre le salon,
+    // et les workers honnêtes livrent là. Ne pas l'ouvrir, c'est ne récolter que des snipers (mesuré le 08/09
+    // 16:00 : un worker à 124 passes verrouillé sur le tableau n'a jamais livré). Coût : un salon neuf par deal
+    // sur le quota du jour de notre IP ; refus de la venue → tableau seulement.
+    await post(signer, OFFER_ROOM, frame);
+    try { await post(signer, room, frame); salonCree = true; }
+    catch (e) { salon = OFFER_ROOM; journal("payer_salon_refuse", { contract: accept.frame.contract, detail: String(e.message ?? e).slice(0, 120) }); }
+  }
   state = applyFrame(state, frame, Date.now()).state;
   d.contract = accept.frame.contract; d.payee = accept.frame.from; d.room = room; d.ref = ref; d.lockSalon = salon;
   d.state = state; d.etape = "verrouille"; d.since = 0; d.lockAt = Date.now();
-  journal("payer_lock", { contract: d.contract, payee: d.payee, salon });
+  journal("payer_lock", { contract: d.contract, payee: d.payee, salon, salonCree });
 }
 
 // ----- ce que le payé écrit, dans son salon ou sur le tableau ----------------------------------------
