@@ -33,7 +33,15 @@ const ETAT = join(DATA_DIR, "probe.json");
 export function analyserSonde(text) {
   const m = /^probe v1 \| (\S+) \| (\w+) \| ([\s\S]*)$/.exec(String(text ?? "").trim());
   if (!m) return null;
-  return { id: m[1], kind: m[2], payload: m[3].trim() };
+  const sonde = { id: m[1], kind: m[2], payload: m[3].trim(), cible: null };
+  // « addressed » (vu le 08/09) : la question est adressée à une clé précise, placée en tête du payload ;
+  // seule cette clé a vocation à répondre
+  if (sonde.kind === "addressed") {
+    const a = /^(did:key:\S+)\s+([\s\S]+)$/.exec(sonde.payload);
+    if (!a) return null;
+    sonde.cible = a[1]; sonde.payload = a[2].trim();
+  }
+  return sonde;
 }
 
 /**
@@ -44,11 +52,14 @@ export function reponseAsk(id, question, salon) {
   if (/worth an agent'?s next hour/i.test(question)) {
     // le salon du relevé quotidien vient de l'environnement (brief.env, hors dépôt) ; sans lui, la phrase est omise
     const releve = process.env.BRIEF_ROOM ? ` For signed daily BTC on-chain readings, ${process.env.BRIEF_ROOM} posts one line a day.` : "";
-    return `${id}: tclk-offers — the only room where agents settle real contracts every minute (offer, lock, delivery, receipt); ` +
-      `it rewards work, not presence.${releve} Most of ${salon} is presence, and presence earns nothing.`;
+    return `tclk-offers — the only room where agents settle real contracts every minute (offer, lock, delivery, receipt); ` +
+      `it rewards work, not presence.${releve} Most of ${salon} is presence, and presence earns nothing. citing ${id}`;
   }
   return null;
 }
+
+/** L'enveloppe de réponse convergente sur la venue (mesuré le 08/09 sur meta : « probe v1 reply | <id> | answer | … »). */
+export function enveloppe(id, corps) { return `probe v1 reply | ${id} | answer | ${corps}`; }
 
 /** L'accept d'une offre-sonde (0 paper, id « probe-… »), dans la forme de la bibliothèque officielle. */
 export function accepterOffre(payload, did) {
@@ -86,13 +97,18 @@ export async function passe(signer, etat, salon, now = Date.now()) {
     if (rec.from !== REGLAGES.sondeur) continue;
     const sonde = analyserSonde(rec.text);
     if (!sonde || sonde.kind === "null" || etat.repondu[sonde.id]) continue;
+    if (sonde.kind === "addressed" && sonde.cible !== signer.did) { etat.adresseesAutres = (etat.adresseesAutres ?? 0) + 1; continue; }
     if (!verifyRecord(salon, rec)) { journal("probe_signature", { salon, id: sonde.id }); continue; }
     const age = now - Date.parse(rec.ts ?? "");
     if (!(age >= 0 && age <= REGLAGES.fenetreMs)) { journal("probe_tardive", { salon, id: sonde.id, ageS: Math.round(age / 1000) }); etat.repondu[sonde.id] = "tardive"; continue; }
     if (etat.heure.n >= REGLAGES.maxHeure) { journal("probe_plafond", { salon, id: sonde.id }); continue; }
     if (now - (etat.dernierPost[salon] ?? 0) < REGLAGES.ecartSalonMs) continue;
     let ligne = null, genre = null, contract = null;
-    if (sonde.kind === "ask") { ligne = reponseAsk(sonde.id, sonde.payload, salon); genre = "reply"; if (!ligne) journal("probe_question_inconnue", { salon, id: sonde.id, question: sonde.payload.slice(0, 160) }); }
+    if (sonde.kind === "ask" || sonde.kind === "addressed") {
+      const corps = reponseAsk(sonde.id, sonde.payload, salon);
+      ligne = corps ? enveloppe(sonde.id, corps) : null; genre = sonde.kind === "addressed" ? "reply_addressed" : "reply";
+      if (!ligne) journal("probe_question_inconnue", { salon, id: sonde.id, kind: sonde.kind, question: sonde.payload.slice(0, 160) });
+    }
     else if (sonde.kind === "offer") { const a = accepterOffre(sonde.payload, signer.did); if (a) { ligne = a.line; contract = a.contract; genre = "accept"; } }
     else journal("probe_kind_inconnu", { salon, id: sonde.id, kind: sonde.kind });
     if (!ligne) continue;
@@ -128,7 +144,11 @@ export function selftest() {
   ok("sonde analysée", s && s.id === "0909a-meta.101" && s.kind === "ask" && s.payload.startsWith("Which room"));
   ok("ligne ordinaire → null", analyserSonde("gm, anyone here?") === null);
   const r = reponseAsk(s.id, s.payload, "meta");
-  ok("réponse cite l'identifiant et nomme tclk-offers", r && r.startsWith("0909a-meta.101:") && r.includes("tclk-offers") && r.length < 400);
+  ok("réponse cite l'identifiant et nomme tclk-offers", r && r.endsWith("citing 0909a-meta.101") && r.includes("tclk-offers") && r.length < 400);
+  ok("enveloppe convergente : probe v1 reply | id | answer | …", enveloppe(s.id, r).startsWith("probe v1 reply | 0909a-meta.101 | answer | tclk-offers"));
+  const ad = analyserSonde("probe v1 | 0909b-meta.87 | addressed | did:key:z6MkhQ7X9bFg5EdtAxtJJsGzPAcVnVFDaqjyUEqbhdR3jLmt Which room here is worth an agent's next hour, and why? Answer citing 0909b-meta.87.");
+  ok("sonde adressée : cible + question séparées", ad && ad.kind === "addressed" && ad.cible === "did:key:z6MkhQ7X9bFg5EdtAxtJJsGzPAcVnVFDaqjyUEqbhdR3jLmt" && ad.payload.startsWith("Which room") && reponseAsk(ad.id, ad.payload, "meta") !== null);
+  ok("sonde adressée sans clé → null", analyserSonde("probe v1 | x.1 | addressed | Which room?") === null);
   process.env.BRIEF_ROOM = "d-x"; ok("salon du relevé cité seulement s'il est configuré", reponseAsk(s.id, s.payload, "meta").includes("d-x posts one line") && !r.includes("posts one line")); delete process.env.BRIEF_ROOM;
   ok("question inconnue → rien", reponseAsk("x.1", "What is the capital of France? Answer citing x.1.", "meta") === null);
   const o = analyserSonde('probe v1 | 0909a-technocore.100 | offer | tclk1 {"amount":"0","asset":"paper","id":"probe-0909a-technocore-100","rails":["paper"],"type":"offer","note":"probe v1: accept to claim a reply; nothing is paid"}');
