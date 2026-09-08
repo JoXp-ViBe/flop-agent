@@ -38,6 +38,10 @@ export const REGLAGES = {
   // fenêtres (surchargées en répétition pour exercer le remboursement en une minute)
   expiresMs: entier("PAYER_EXPIRES_MS", 20 * 60_000), claimByMs: entier("PAYER_CLAIMBY_MS", 30 * 60_000), refundAfterMs: entier("PAYER_REFUND_MS", 45 * 60_000),
   attenteLockRoomMs: 20_000, sondeMs: 3_000,
+  // le choix du payé : on laisse les accepts arriver quelques secondes, puis on verrouille le plus fiable
+  fenetreAcceptsMs: entier("PAYER_ACCEPT_WINDOW_MS", 8_000), maxAccepts: 6,
+  passeportUrl: process.env.PAYER_PASSPORT_URL ?? "https://flop-market.pages.dev/board/blockrewards/did/",
+  passeportTtlMs: 6 * 3_600_000,
 };
 const ETAT = join(DATA_DIR, "payer.json");
 const PROTOCOLE = "deliver as one signed message in the deal room, then reveal (tclk/1)";
@@ -155,6 +159,79 @@ async function poster(signer, etat) {
   log("", `offre ${offer.id.slice(0, 12)} · ${tache.famille}`);
 }
 
+// ----- le choix du payé ------------------------------------------------------------------------------
+// Mesuré le 08/09/2026 : les trois premiers accepteurs de nos offres étaient des « snipers » (accept en
+// quelques secondes, reveal ou réclamation du rail, aucune livraison). Verrouiller le premier accept livre
+// donc l'offre au plus rapide, pas au plus fiable. On laisse les accepts arriver quelques secondes, puis on
+// choisit : d'abord notre propre expérience du payé (un sniper vu chez nous est écarté tant qu'il y a un
+// autre candidat), ensuite le passeport communautaire blockrewards (passes / fails publics, une donnée
+// tierce lue en HTTP, jamais une instruction), enfin l'ordre d'arrivée.
+
+/** Notre expérience d'un payé : verdicts que nous lui avons rendus. */
+export function noterExperience(etat, did, pass) {
+  etat.reputation = etat.reputation ?? {};
+  const r = etat.reputation[did] ?? { ownPass: 0, ownFail: 0 };
+  r[pass ? "ownPass" : "ownFail"] = (r[pass ? "ownPass" : "ownFail"] ?? 0) + 1;
+  r.vuLe = Date.now();
+  etat.reputation[did] = r;
+  const cles = Object.keys(etat.reputation);
+  if (cles.length > 500) for (const k of cles.sort((x, y) => (etat.reputation[x].vuLe ?? 0) - (etat.reputation[y].vuLe ?? 0)).slice(0, 100)) delete etat.reputation[k];
+}
+
+/** « passes 3 · claimed 0 · fails 0 · … · last 2026-09-07 03:38 UTC » → {passes, fails, claimed, last} ou null. */
+export function lirePasseportTexte(html) {
+  const texte = String(html ?? "").replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const n = (nom) => { const m = new RegExp(`\\b${nom}\\s+(\\d+)`).exec(texte); return m ? Number(m[1]) : null; };
+  const passes = n("passes"), fails = n("fails"), claimed = n("claimed");
+  if (passes === null && fails === null) return null;
+  const last = /\blast\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/.exec(texte);
+  return { passes: passes ?? 0, fails: fails ?? 0, claimed: claimed ?? 0, last: last ? last[1] : null };
+}
+
+/** Le passeport communautaire d'un DID (12 derniers caractères), mis en cache 6 h ; absent → inconnu. */
+async function lirePasseport(etat, did) {
+  etat.reputation = etat.reputation ?? {};
+  const r = etat.reputation[did] ?? { ownPass: 0, ownFail: 0 };
+  if (r.fetchedAt && Date.now() - r.fetchedAt < REGLAGES.passeportTtlMs) return r;
+  r.fetchedAt = Date.now();
+  try {
+    const res = await fetch(REGLAGES.passeportUrl + did.slice(-12) + ".html", { signal: AbortSignal.timeout(6_000), redirect: "follow" });
+    if (res.ok) { const p = lirePasseportTexte(await res.text()); if (p) Object.assign(r, p); }
+    else r.passeportAbsent = res.status;
+  } catch (e) { journal("payer_passeport_refuse", { did, detail: String(e.message ?? e).slice(0, 100) }); }
+  r.vuLe = Date.now();
+  etat.reputation[did] = r;
+  return r;
+}
+
+/**
+ * Le candidat à verrouiller. Ordre : jamais un payé qui nous a déjà sniffé si un autre existe ; puis celui
+ * que nous avons vu livrer ; puis le passeport (passes − 2·fails) ; puis l'ordre d'arrivée.
+ */
+export function choisirPayee(accepts, reputation) {
+  const info = (c) => reputation[c.frame.from] ?? {};
+  const score = (c) => {
+    const r = info(c);
+    return (r.ownPass ?? 0) * 100 - (r.ownFail ?? 0) * 1000 + (r.passes ?? 0) - 2 * (r.fails ?? 0);
+  };
+  const classes = accepts.map((c, i) => ({ c, i, s: score(c) })).sort((x, y) => y.s - x.s || x.i - y.i);
+  const best = classes[0];
+  const r = info(best.c);
+  const ecartes = classes.filter((x) => (info(x.c).ownFail ?? 0) > 0 && x !== best).length;
+  let motif = (r.ownFail ?? 0) > 0 ? "only sniper seen by us" : (r.ownPass ?? 0) > 0 ? "delivered to us before" : (r.passes ?? 0) > 0 ? `passport passes ${r.passes} fails ${r.fails ?? 0}` : "first accepter, no record";
+  if (ecartes) motif += `; ${ecartes} seen sniping, skipped`;
+  // le classement complet, pour le journal : ordre d'arrivée, score, 8 derniers caractères du DID
+  const classement = classes.map((x) => ({ did: x.c.frame.from.slice(-8), i: x.i, score: x.s }));
+  return { frame: best.c.frame, motif, score: best.s, classement };
+}
+
+/** Une offre est prête à verrouiller : des accepts, et la fenêtre est close (ou assez de candidats). */
+export function pretAVerrouiller(d, now) {
+  if (d.etape !== "offerte" || !(d.accepts ?? []).length) return false;
+  if (now > d.offer.expiresMs) return false;
+  return now - d.premierAccept >= REGLAGES.fenetreAcceptsMs || d.accepts.length >= REGLAGES.maxAccepts;
+}
+
 // ----- le verrou -------------------------------------------------------------------------------------
 async function salonExiste(room) { return (await readSince(room, 0, 0)).records.length > 0; }
 
@@ -249,6 +326,7 @@ async function conclure(signer, etat, id, d, verdict) {
   const reviewId = "0x" + randomBytes(8).toString("hex");
   await postText(signer, salon, ligneRevue(reviewId, d.contract, d.payee, verdict));
   etat.stats[verdict.pass ? "pass" : "fail"] += 1;
+  noterExperience(etat, d.payee, verdict.pass);
   journal("payer_verdict", { contract: d.contract, payee: d.payee, pass: verdict.pass, motif: verdict.motif, livraison: d.livraison == null ? null : String(d.livraison).slice(0, 120), salon: d.livraisonSalon ?? d.revealSalon ?? null, attendu: d.tache.reponse });
   log("", `verdict ${verdict.pass ? "PASS" : "FAIL"} · ${d.contract.slice(0, 12)} · ${String(d.livraison ?? "(no delivery)").slice(0, 60)}`);
   delete etat.actifs[id];
@@ -332,8 +410,20 @@ async function boucle() {
         if (!d || a.frame.from === signer.did) continue;
         if (d.etape !== "offerte") { journal("payer_accept_ignore", { id: a.frame.ref, payee: a.frame.from, motif: "already " + d.etape }); continue; }
         if (Date.now() > d.offer.expiresMs) { journal("payer_accept_ignore", { id: a.frame.ref, payee: a.frame.from, motif: "offer expired" }); continue; }
-        try { await verrouiller(signer, d, a); etat.stats.acceptees += 1; journal("payer_accepted", { id: a.frame.ref, contract: a.frame.contract, payee: a.frame.from }); }
-        catch (e) { journal("payer_error", { id: a.frame.ref, detail: String(e.message ?? e).slice(0, 160) }); delete etat.actifs[a.frame.ref]; }
+        d.accepts = d.accepts ?? [];
+        if (d.accepts.some((x) => x.frame.from === a.frame.from)) continue;
+        d.accepts.push({ frame: a.frame, at: Date.now() });
+        d.premierAccept = d.premierAccept ?? Date.now();
+        journal("payer_accept_vu", { id: a.frame.ref, payee: a.frame.from, candidats: d.accepts.length });
+      }
+      // 1bis. fin de fenêtre : on verrouille le candidat le plus fiable (notre expérience, puis le passeport communautaire)
+      for (const [id, d] of Object.entries(etat.actifs)) {
+        if (!pretAVerrouiller(d, Date.now())) continue;
+        for (const c of d.accepts) await lirePasseport(etat, c.frame.from);
+        const choix = choisirPayee(d.accepts, etat.reputation ?? {});
+        journal("payer_lock_choix", { id, candidats: d.accepts.length, payee: choix.frame.from, motif: choix.motif, classement: choix.classement });
+        try { await verrouiller(signer, d, { frame: choix.frame }); etat.stats.acceptees += 1; journal("payer_accepted", { id, contract: choix.frame.contract, payee: choix.frame.from }); }
+        catch (e) { journal("payer_error", { id, detail: String(e.message ?? e).slice(0, 160) }); delete etat.actifs[id]; }
       }
       // 2. les deals en cours
       for (const [id, d] of Object.entries(etat.actifs)) {
@@ -400,6 +490,20 @@ export function selftest() {
   ok("decision : rien → attendre puis refund à refundAfter", decision({ offer: o2 }, 150) === "attendre" && decision({ offer: o2 }, 200) === "refund");
   ok("pertinent : le payé depuis le verrou (marge 10 s), pas avant, pas un autre", pertinent(d, { from: payee, ts: new Date(1_800_000_000_001 - 5_000).toISOString() }) && !pertinent(d, { from: payee, ts: new Date(1_800_000_000_001 - 60_000).toISOString() }) && !pertinent(d, { from: "did:key:z6MkAutre", ts }));
   ok("juger attest : la ligne attestée est cherchée dans le salon de la livraison", juger(at, "attested seq 5", [{ from: payee, seq: 5, text: "autre", room: "mb-p-x" }, { from: payee, seq: 5, text: "tclk-attest " + C, room: "tclk-offers" }], payee, C, "tclk-offers").pass && !juger(at, "attested seq 5", [{ from: payee, seq: 5, text: "autre", room: "mb-p-x" }, { from: payee, seq: 5, text: "tclk-attest " + C, room: "tclk-offers" }], payee, C, "mb-p-x").pass);
+  // le choix du payé
+  const A = { frame: { from: "did:key:z6MkA1" } }, B = { frame: { from: "did:key:z6MkB2" } }, Cc = { frame: { from: "did:key:z6MkC3" } };
+  ok("choix : sans mémoire, l'ordre d'arrivée", choisirPayee([A, B], {}).frame.from === "did:key:z6MkA1" && choisirPayee([A, B], {}).motif === "first accepter, no record");
+  ok("choix : un sniper vu chez nous est écarté s'il y a un autre candidat, et le journal le dit", choisirPayee([A, B], { "did:key:z6MkA1": { ownFail: 1 } }).frame.from === "did:key:z6MkB2" && choisirPayee([A, B], { "did:key:z6MkA1": { ownFail: 1 } }).motif === "first accepter, no record; 1 seen sniping, skipped" && choisirPayee([A, B], { "did:key:z6MkA1": { ownFail: 1 } }).classement.length === 2);
+  ok("choix : un sniper seul est quand même verrouillé (revue FAIL = information)", choisirPayee([A], { "did:key:z6MkA1": { ownFail: 1 } }).motif === "only sniper seen by us");
+  ok("choix : celui qui nous a déjà livré passe devant le passeport", choisirPayee([A, B], { "did:key:z6MkA1": { passes: 40 }, "did:key:z6MkB2": { ownPass: 1 } }).frame.from === "did:key:z6MkB2");
+  ok("choix : à expérience égale, le passeport (passes − 2·fails)", choisirPayee([A, B, Cc], { "did:key:z6MkA1": { passes: 3, fails: 0 }, "did:key:z6MkB2": { passes: 10, fails: 4 }, "did:key:z6MkC3": { passes: 5, fails: 0 } }).frame.from === "did:key:z6MkC3");
+  const pp = lirePasseportTexte('<html><body><h1>Passport</h1><p>rank 231 · score 16 · passes 3 · claimed 0 · fails 1 · validations 0/0 · distinct posters 3 · first 2026-09-07 01:40 · last 2026-09-07 03:38 UTC</p></body></html>');
+  ok("passeport : passes / fails / claimed / last lus dans la page", pp && pp.passes === 3 && pp.fails === 1 && pp.claimed === 0 && pp.last === "2026-09-07 03:38");
+  ok("passeport : page sans compteurs → null", lirePasseportTexte("<html>Not found</html>") === null);
+  const e2 = { reputation: {} }; noterExperience(e2, "did:key:z6MkA1", false); noterExperience(e2, "did:key:z6MkA1", true); noterExperience(e2, "did:key:z6MkA1", true);
+  ok("expérience : nos verdicts comptés par payé", e2.reputation["did:key:z6MkA1"].ownFail === 1 && e2.reputation["did:key:z6MkA1"].ownPass === 2);
+  const dd = { etape: "offerte", offer: { expiresMs: 10_000_000 }, accepts: [A], premierAccept: 1_000 };
+  ok("fenêtre : pas avant 8 s, oui après, oui dès 6 candidats, jamais après expiration", !pretAVerrouiller(dd, 5_000) && pretAVerrouiller(dd, 9_100) && pretAVerrouiller({ ...dd, accepts: [A, B, Cc, A, B, Cc] }, 1_500) && !pretAVerrouiller({ ...dd, offer: { expiresMs: 2_000 } }, 9_100));
   for (const [n, r] of cas) console.log(`  ${n.padEnd(70)} ${r ? "reussi" : "ECHOUE"}`);
   const e = cas.filter(([, x]) => !x).length; console.log(`selftest payer : ${cas.length - e}/${cas.length}`); return e ? 1 : 0;
 }

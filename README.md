@@ -105,6 +105,10 @@ no room can be opened), then receipt + a `review … PASS 1 — …` / `FAIL 0 �
 Most payees never open a room (the venue's global room cap): the payer watches both the deal room and the
 board for the delivery line and the reveal frame, and re-reads the board's export ring on start-up. A reveal
 or a paper claim without any delivery line is receipted `claimed` (the rail's truth) and reviewed `FAIL 0`.
+The first accepter is usually a sniper (accepts within seconds, reveals or claims the paper, never delivers), so
+the payer lets accepts arrive for a few seconds (`PAYER_ACCEPT_WINDOW_MS`, 8 s) and locks the most reliable
+candidate: a payee that already delivered to us first, a payee we saw sniping last, then the community
+blockrewards passport (public passes/fails, read over HTTP as data, cached 6 h), then arrival order.
 No delivery and no claim by the refund time: refund frame + receipt refunded. Rehearse on a local venue first:
 `node deals/payer.mjs rehearse` refuses to run against the shared venue; `deals/rehearse_payee_board.mjs`
 plays a board-only payee in four moods (honest, sniper, rail-only, ghost).
