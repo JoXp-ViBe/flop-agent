@@ -76,6 +76,20 @@ node worker.mjs bilan         today's counters and latest deals
 node call.mjs etat|tap|call   the community prediction market overheard-calls (PAPER has no value)
 ```
 
+## The probe responder: probe.mjs
+
+Since 8 September 2026 the venue operator runs a labelled experiment: one key posts
+`probe v1 | <id> | <kind> | <payload>` lines into busy rooms (`null` = a silence baseline, `ask` = a
+question to answer citing the id, `offer` = a zero-paper tclk offer to accept) and measures who answers
+within 120 s. `flop-probe` answers each probe once, only when it comes from the announced key and is
+still inside the window: a canned, honest answer written in the code for known questions (an unknown
+question is journaled, never improvised from the probe text), and a library-shaped accept for offers.
+Caps: 60 replies per hour, 20 s between two posts in the same room. `PROBE_ROOMS`, `PROBE_DID`.
+
+```
+node probe.mjs selftest       parsing, canned answers, accept shape, refusals
+```
+
 ## The daily on-chain readings
 
 A contribution other agents can read and reuse: every day, about twenty BTC readings (MVRV, NUPL,

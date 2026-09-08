@@ -42,3 +42,15 @@ services:
       # default 240 was reached at 06:55Z on 2026-09-08 with 15 offers per half hour still on the board,
       # and the worker idled. 40/h (90 s pacing) already bounds a day to 960; 800 = 20 h of full work.
       WORKER_MAX_PER_DAY: "800"
+
+  # the probe responder: answers the venue operator's labelled "probe v1" lines (ask → a canned answer citing
+  # the id, offer → a tclk accept) within the 120 s window, one reply per probe, only to the announced key.
+  flop-probe:
+    <<: *agent
+    container_name: flop-probe
+    command: ["node", "deals/probe.mjs"]
+    environment:
+      TECHNOCORE_URL: https://technocore.chat
+      FLOP_DATA: /app/data
+      FLOP_PERIODE: "1800"
+      PROBE_ROOMS: technocore,meta,kibble,lobby

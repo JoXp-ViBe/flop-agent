@@ -50,6 +50,22 @@ if (!REGLAGES.ecartMs && REGLAGES.maxHeure > 0) REGLAGES.ecartMs = Math.floor(36
 const ETAT = join(DATA_DIR, "worker.json");
 const SUSPENSIONS = join(DATA_DIR, "suspensions.json");   // { "familles": ["verification", …] } — écrit par le veilleur de santé (hôte) quand une famille échoue trop
 let suspCache = { ts: 0, familles: new Set() };
+
+// Salons neufs refusés par la venue (429 room-creation avec Retry-After ≈ 1 h, ou 400 « room limit reached »,
+// plafond global) : mesuré le 08/09 09:00-10:15, 9 tâches attest acceptées puis annulées faute de salon
+// (l'attestation DOIT être postée dans le salon du deal). Tant que le blocage court, on n'accepte pas d'attest.
+export let salonsBloquesJusqua = 0;
+export function noterRefusSalon(detail, now = Date.now()) {
+  const d = String(detail ?? "");
+  let secondes = 0;
+  const m = /retry-after (\d+)s/.exec(d);
+  if (m && /room/i.test(d)) secondes = Number(m[1]);
+  else if (/room limit reached/i.test(d)) secondes = 900;
+  if (!secondes) return false;
+  const jusqua = now + Math.min(secondes, 4 * 3600) * 1000;
+  if (jusqua > salonsBloquesJusqua) { salonsBloquesJusqua = jusqua; journal("salons_bloques", { jusqua: new Date(jusqua).toISOString(), secondes }); }
+  return true;
+}
 export function suspendue(famille) {
   if (Date.now() - suspCache.ts > 60_000) {
     suspCache = { ts: Date.now(), familles: new Set() };
@@ -123,7 +139,7 @@ export function planifier(spec, signer) {
   if (spec.family !== "validation" && REGLAGES.familles.has("docs") && !suspendue("docs") && analyserDocs(spec.ask)) return planDocs(spec);
   if (!REGLAGES.familles.has(spec.family)) return null;
   if (spec.family === "math") { const r = solveMath(spec.ask); return r === null ? null : { genre: "math", reponse: r }; }
-  if (spec.family === "attest") { return planAttest(spec.ask, "0x", spec.done) ? { genre: "attest" } : null; }
+  if (spec.family === "attest") { if (Date.now() < salonsBloquesJusqua) return null; return planAttest(spec.ask, "0x", spec.done) ? { genre: "attest" } : null; }
   if (spec.family === "protocol") { const p = planProtocol(spec.ask, { base: BASE, signer }); return p ? { genre: "protocol", executer: p } : null; }
   return null;
 }
@@ -147,8 +163,21 @@ export async function planTables(spec) {
   if (texte.length >= 7000 || (spec.raw ?? "").length >= 7000) { journal("table_tronquee", { family: spec.family, longueur: texte.length }); return null; }
   const table = parseTable(texte);
   if (!table) return null;
+  if (tableTronquee(spec.ask, table)) { journal("table_tronquee", { family: spec.family, longueur: texte.length, dernierSeq: table.rows[table.rows.length - 1]?.seq ?? null }); return null; }
   const reponse = repondreTable(spec.ask, table);
   return reponse === null ? null : { genre: "tables", reponse };
+}
+
+/**
+ * L'ask annonce « seq A–B » ; la note, coupée à 8 192 caractères par la venue, peut s'arrêter bien avant B
+ * (08/09 09:14 : plage de 925 seq, 90 lignes livrées, jugé faux). La longueur seule ne le voit pas quand les
+ * lignes sont courtes : on exige que le dernier seq de la table approche la fin annoncée (marge 50 seq).
+ */
+export function tableTronquee(ask, table, marge = 50) {
+  const plage = /seq\s+(\d+)\s*[–-]\s*(\d+)/.exec(ask ?? "");
+  if (!plage || !table?.rows?.length) return false;
+  const dernier = Number(table.rows[table.rows.length - 1].seq), fin = Number(plage[2]);
+  return Number.isFinite(dernier) && Number.isFinite(fin) && dernier < fin - marge;
 }
 
 // ----- validation : jugée par l'oracle en arrière-plan, puis acceptée si le verdict a la bonne forme ---
@@ -227,7 +256,7 @@ async function menerDeal(deal, signer, etat) {
     // 1. le salon du deal existe dès notre heartbeat (ou dès le verrou du payeur si notre IP a épuisé ses salons du jour)
     // jamais de réessai ici : quota de salons épuisé = 429 immédiat, et c'est le payeur qui ouvre le salon
     try { await postText(signer, room, heartbeatLine(signer.did, contract), { retries: 0 }); journal("heartbeat", { contract }); }
-    catch (e) { journal("heartbeat_refuse", { contract, detail: String(e.message ?? e).slice(0, 160) }); }
+    catch (e) { const msg = String(e.message ?? e); journal("heartbeat_refuse", { contract, detail: msg.slice(0, 160) }); noterRefusSalon(msg); }
 
     // 2. la réponse, calculée maintenant : si elle échoue, on se retire proprement (cancel avant tout verrou)
     let reponse = deal.reponse ?? null;
@@ -433,6 +462,16 @@ function selftest() {
   ok("validation jamais traitée en docs", planifier(parseSpec("validation | From https://technocore.chat/llms.txt: judge this | done looks like: PASS or FAIL"), null) === null);
   ok("math insoluble → null", planifier(parseSpec("math | [difficulty 3/3] What is love? | done looks like: one line"), null) === null);
   for (const [nom, res] of cas) console.log(`  ${nom.padEnd(36)} ${res ? "reussi" : "ECHOUE"}`);
+  const rows = (deb, n) => Array.from({ length: n }, (_, k) => ({ seq: String(deb + k), id: "0x" + k, payer: "P" + (k % 3), amount: "1", asset: "FLOP", rails: "paper", proto: "a2a", role: "payer" }));
+  ok("table tronquée : dernier seq loin de la fin annoncée", tableTronquee("Census over the excerpt seq 962441–963365 : how many offers", { header: ["seq"], rows: rows(962441, 90) }));
+  ok("table complète : dernier seq proche de la fin", !tableTronquee("seq 100–300 : how many offers", { header: ["seq"], rows: rows(100, 190) }));
+  ok("sans plage annoncée : pas de verdict", !tableTronquee("how many offers", { header: ["seq"], rows: rows(1, 3) }));
+  const avant = salonsBloquesJusqua;
+  ok("refus de salon 429 → blocage noté", noterRefusSalon("post to mb-p-tclk-x: rate limited (retry-after 3714s): 429 429 room-creation quota", now) && salonsBloquesJusqua === now + 3714 * 1000);
+  ok("refus 400 plafond global → 15 min", noterRefusSalon("post to mb-p-tclk-y: 400 400 room limit reached (163840 is the cap)", now + 10_000_000) && salonsBloquesJusqua === now + 10_000_000 + 900 * 1000);
+  ok("autre refus → rien", !noterRefusSalon("post to mb-p-tclk-z: 422 duplicate", now));
+  ok("attest refusée tant que les salons sont bloqués", planifier(parseSpec("attest | [difficulty 1/3] Post a signed line in the deal room then report its seq | reward tier 1/5 | done looks like: attested seq <seq>"), { did: "did:key:z6MkMoi" }) === null);
+  salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
   console.log(`selftest worker : ${cas.length - echecs}/${cas.length}`);
   return echecs ? 1 : 0;
