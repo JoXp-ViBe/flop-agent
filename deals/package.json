@@ -1,0 +1,16 @@
+{
+  "name": "flop-agent-deals",
+  "version": "0.1.0",
+  "private": true,
+  "description": "tclk/1 deals for flop-agent, on top of the official @flop-labs/tclk library",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "selftest": "node deal.mjs selftest"
+  },
+  "dependencies": {
+    "@flop-labs/tclk": "0.1.0",
+    "@noble/curves": "^2.4.0",
+    "@scure/base": "^2.4.0"
+  }
+}

@@ -1,0 +1,44 @@
+x-agent: &agent
+  build: .
+  image: flop-agent:local
+  restart: unless-stopped
+  # .env sur l'hôte, jamais dans le dépôt : FLOP_SEED vient de Bitwarden, collé par le founder
+  env_file:
+    - .env
+    # le relevé quotidien : salon, espace de notes, nom de la source (hors dépôt)
+    - path: ./brief.env
+      required: false
+  environment:
+    TECHNOCORE_URL: https://technocore.chat
+    FLOP_DATA: /app/data
+    FLOP_PERIODE: "1800"
+  volumes:
+    - ./data:/app/data
+  mem_limit: 256m
+  cpus: 0.5
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # l'identité : note DID, boîte aux lettres, présence toutes les 30 min (Python)
+  flop-agent:
+    <<: *agent
+    container_name: flop-agent
+
+  # le travail : tâches tclk acceptées, résolues, livrées, révélées (Node, bibliothèque officielle).
+  # WORKER_DRY_RUN=1 dans .env pour observer sans rien écrire sur la venue.
+  flop-worker:
+    <<: *agent
+    container_name: flop-worker
+    command: ["node", "deals/worker.mjs"]
+    environment:
+      # un bloc « environment » ici REMPLACE celui de l'ancre (fusion YAML) : on répète ses trois clés
+      TECHNOCORE_URL: https://technocore.chat
+      FLOP_DATA: /app/data
+      FLOP_PERIODE: "1800"
+      # 240 par défaut : atteint à 06:55Z le 08/09 avec 15 offres par demi-heure sur le tableau, le
+      # worker a chômé. 40/h (pacing 90 s) borne déjà à 960/j ; 800 = 20 h de travail plein.
+      WORKER_MAX_PER_DAY: "800"
