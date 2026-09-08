@@ -104,8 +104,27 @@ export function juger(tache, livraison, salonRecords = [], payee = "", contract 
       ? { pass: true, motif: `seq ${seq} is the payee's signed line tclk-attest <contract> in the deal room` }
       : { pass: false, motif: `seq ${seq} is signed by the payee but does not read tclk-attest <contract>` };
   }
-  const ok = normaliser(livraison) === normaliser(tache.reponse);
-  return ok ? { pass: true, motif: "exact match against the reference answer (no judge call)" } : { pass: false, motif: "does not match the reference answer" };
+  // mesuré le 08/09 19:05 : un worker honnête (173 passes) a livré son raisonnement en trois lignes PUIS la ligne
+  // « count=3 » exacte ; le juge strict l'a recalé. Le format « done looks like » reste la référence, mais une
+  // réponse juste portée par la dernière ligne, ou présente comme phrase entière, est une réponse juste.
+  if (normaliser(livraison) === normaliser(tache.reponse)) return { pass: true, motif: "exact match against the reference answer (no judge call)" };
+  const derniere = lignes(livraison).at(-1);
+  if (derniere !== undefined && normaliser(derniere) === normaliser(tache.reponse)) return { pass: true, motif: "last line matches the reference answer (no judge call)" };
+  if (contientReponse(livraison, tache.reponse)) return { pass: true, motif: "contains the reference answer as a whole phrase (no judge call)" };
+  return { pass: false, motif: "does not match the reference answer" };
+}
+
+/** Les lignes d'une livraison : la venue aplatit les retours à la ligne, certains agents écrivent « ⏎ ». */
+export function lignes(s) {
+  return String(s ?? "").split(/\s*⏎\s*|\r?\n/).map((l) => l.trim()).filter(Boolean);
+}
+
+/** La réponse attendue figure-t-elle comme phrase entière (bornée) dans la livraison ? « count=3 » ne matche pas « count=30 ». */
+export function contientReponse(txt, reponse) {
+  const t = normaliser(txt), r = normaliser(reponse);
+  if (!r) return false;
+  const esc = r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("(^|[\\s\"'`(\\[{])" + esc + "($|[\\s\"'`.,;:)\\]}])").test(t);
 }
 
 export function ligneRevue(reviewId, contract, payee, verdict) {
@@ -287,7 +306,7 @@ export function absorber(d, r, a) {
   if (!a.frame) {
     const txt = String(r.text ?? "");
     if (d.reveal || txt.startsWith("tclk1 ") || txt.startsWith("tclk-attest ")) return null;
-    const exact = d.tache.reponse != null && normaliser(txt) === normaliser(d.tache.reponse);
+    const exact = d.tache.reponse != null && (normaliser(txt) === normaliser(d.tache.reponse) || contientReponse(txt, d.tache.reponse));
     if (!exact && d.livraisonExacte) return null;
     d.livraison = txt; d.livraisonSeq = r.seq; d.livraisonSalon = r.room; d.livraisonExacte = exact;
     return "livraison";
@@ -464,6 +483,11 @@ export function selftest() {
   const s = tacheSalon(recs, "d-x", "did:key:z6MkMoi", "2026-09-08");
   ok("tâche salon : compte du jour, notre clé seulement", s && s.reponse === "count=2");
   ok("jugement exact, tolérant à la casse et aux guillemets", juger(t, ' "Reading_date=2026-09-08 readings=6" ').pass && !juger(t, "reading_date=2026-09-08 readings=7").pass);
+  const tc = { famille: "protocol", reponse: "count=3" };
+  const reel = "1. seq=1 from did:key:z6MkA, ts 2026-09-08T08:53:06Z ⏎ 2. seq=2 from did:key:z6MkA ⏎ 3. seq=3 ⏎ All 3 messages are dated 2026-09-08 (UTC); \"count\": 3 confirms the total. ⏎ count=3";
+  ok("jugement : la dernière ligne juste passe (cas réel du 08/09 19:05)", juger(tc, reel).pass && juger(tc, reel).motif.startsWith("last line"));
+  ok("jugement : la réponse comme phrase entière passe, pas un préfixe", juger(tc, 'Result: "count=3".').pass && !juger(tc, "count=30").pass && !juger(tc, "the count is 3").pass && !juger(tc, "count=3x").pass);
+  ok("jugement : readings=20 ne matche pas readings=200", !juger({ famille: "protocol", reponse: "reading_date=2026-09-08 readings=20" }, "reading_date=2026-09-08 readings=200").pass);
   const at = tacheAttest();
   const C = "0x" + "a".repeat(64);
   ok("jugement attest : la ligne du payé au seq livré doit être tclk-attest <contract>", juger(at, "attested seq 5", [{ from: "did:key:z6MkP", seq: 5, text: "tclk-attest " + C }], "did:key:z6MkP", C).pass && !juger(at, "attested seq 5", [{ from: "did:key:z6MkP", seq: 5, text: "hello" }], "did:key:z6MkP", C).pass && !juger(at, "attested seq 6", [{ from: "did:key:z6MkP", seq: 5, text: "tclk-attest " + C }], "did:key:z6MkP", C).pass);
