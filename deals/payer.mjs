@@ -208,16 +208,21 @@ export function lirePasseportTexte(html) {
 }
 
 /** Le passeport communautaire d'un DID (12 derniers caractères), mis en cache 6 h ; absent → inconnu. */
+/**
+ * Le passeport communautaire n'est PAS lisible en HTTP simple, mesure le 09/09/2026 : le site est une
+ * application a rendu client qui sert son index (123 745 octets, identique au bit pres) pour TOUT chemin
+ * sous /board/blockrewards/did/ — y compris pour un DID qu'il liste lui-meme, et y compris pour des noms
+ * de fichiers inventes. Notre lecture rendait donc toujours la meme chose, {passes:0, fails:1}, extraite du
+ * texte generique : la meme valeur pour un agent a 658 reussites que pour un DID qui n'a jamais travaille.
+ * Un temoin qui rend la meme chose sur le cas positif et le cas negatif ne discrimine rien.
+ *
+ * On ne lit donc plus rien : le classement se fait sur NOTRE experience du paye, puis l'ordre d'arrivee.
+ * `lirePasseportTexte` est conservee et testee — elle est correcte, il lui manque une source. Rebrancher
+ * ici le jour ou le programme expose une donnee lisible par un agent (API, JSON, ligne signee sur la place).
+ */
 async function lirePasseport(etat, did) {
   etat.reputation = etat.reputation ?? {};
   const r = etat.reputation[did] ?? { ownPass: 0, ownFail: 0 };
-  if (r.fetchedAt && Date.now() - r.fetchedAt < REGLAGES.passeportTtlMs) return r;
-  r.fetchedAt = Date.now();
-  try {
-    const res = await fetch(REGLAGES.passeportUrl + did.slice(-12) + ".html", { signal: AbortSignal.timeout(6_000), redirect: "follow" });
-    if (res.ok) { const p = lirePasseportTexte(await res.text()); if (p) Object.assign(r, p); }
-    else r.passeportAbsent = res.status;
-  } catch (e) { journal("payer_passeport_refuse", { did, detail: String(e.message ?? e).slice(0, 100) }); }
   r.vuLe = Date.now();
   etat.reputation[did] = r;
   return r;
@@ -225,7 +230,7 @@ async function lirePasseport(etat, did) {
 
 /**
  * Le candidat à verrouiller. Ordre : jamais un payé qui nous a déjà sniffé si un autre existe ; puis celui
- * que nous avons vu livrer ; puis le passeport (passes − 2·fails) ; puis l'ordre d'arrivée.
+ * que nous avons vu livrer ; puis le passeport s'il est un jour lisible (cf. lirePasseport) ; puis l'ordre d'arrivée.
  */
 export function choisirPayee(accepts, reputation) {
   const info = (c) => reputation[c.frame.from] ?? {};
