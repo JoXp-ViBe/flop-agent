@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { OFFER_ROOM, PaperRail, dealRoom, generateHashLock, makeAccept } from "@flop-labs/tclk";
 import { DATA_DIR, signerFromEnv } from "./signing.mjs";
 import {
-  BASE, journal, log, readSince, postText, post, notes, authenticate, heartbeatLine, noteAtPath, saveDeal, nonceDepasse,
+  BASE, journal, log, readSince, postText, post, notes, authenticate, heartbeatLine, noteAtPath, saveDeal, nonceDepasse, protegerNonce, parseAvecNonceExact,
 } from "./venue.mjs";
 import { parseSpec, solveMath, planAttest, planProtocol } from "./solvers.mjs";
 import { analyserDocs, planDocs, traiterFile as traiterFileDocs, etatDocs } from "./docs.mjs";
@@ -522,6 +522,17 @@ function selftest() {
   ok("cadence : une offre a 1000 passe aussi", filtrer({ ...base, amount: "1000" }, ctxCad) === null);
   const plafCad = { ...etatCad }; fenetres(plafCad, now); plafCad.heure = { ...plafCad.heure, accepts: cad.maxHeure };
   ok("cadence : le plafond horaire reste au-dessus du montant", filtrer({ ...base, amount: "1000" }, { ...ctxCad, etat: plafCad }) === "plafond horaire");
+  // le nonce de l enveloppe est signe comme TEXTE : JSON.parse l arrondit au-dela de 2^53 et refuse la trame
+  const NONCE_ALTERE = "1788976440077681234";   // reellement altere par JSON.parse
+  const NONCE_CHANCE = "1788976440077681200";   // tombe pile sur un double : survivait deja
+  ok("nonce : 19 chiffres protege avant le parse", protegerNonce(`{"nonce":${NONCE_ALTERE}}`).includes(`"nonce":"${NONCE_ALTERE}"`));
+  ok("nonce : la valeur exacte survit au parse", String(parseAvecNonceExact(`{"nonce":${NONCE_ALTERE}}`).nonce) === NONCE_ALTERE);
+  ok("nonce : sans protection JSON.parse altere bien", String(JSON.parse(`{"n":${NONCE_ALTERE}}`).n) !== NONCE_ALTERE);
+  ok("nonce : une valeur qui tombe pile survivait deja", String(JSON.parse(`{"n":${NONCE_CHANCE}}`).n) === NONCE_CHANCE);
+  ok("nonce : deja en chaine, intact", protegerNonce('{"nonce":"abc123"}') === '{"nonce":"abc123"}');
+  ok("nonce : celui du texte echappe nest PAS touche", protegerNonce('{"text":"tclk1 {\\"nonce\\":123}","nonce":456}') === '{"text":"tclk1 {\\"nonce\\":123}","nonce":"456"}');
+  ok("nonce : aucun autre champ numerique touche", protegerNonce('{"seq":123,"nonce":456}') === '{"seq":123,"nonce":"456"}');
+  ok("nonce : entree vide ou nulle ne casse pas", protegerNonce("") === "" && protegerNonce(null) === "");
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
   console.log(`selftest worker : ${cas.length - echecs}/${cas.length}`);

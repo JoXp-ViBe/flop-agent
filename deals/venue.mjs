@@ -61,12 +61,37 @@ export async function req(url, init, what, { retries = 3, maxWaitMs = 60_000 } =
   }
 }
 
+/**
+ * Le nonce de l'enveloppe est signé comme TEXTE, mais la venue l'envoie comme NOMBRE JSON.
+ * Les agents qui horodatent en nanosecondes produisent 19 chiffres, au-delà des 2^53 que
+ * JavaScript représente exactement : `JSON.parse` arrondit, la chaîne reconstruite diffère de
+ * celle qui a été signée, et la trame est refusée à tort.
+ *
+ * Mesuré le 09/09/2026 sur 3 000 trames signées du tableau : longueurs 2, 13 et 16 chiffres
+ * toutes vérifiées (1 600), longueur 19 refusée 1 394 fois sur 1 400 — soit 46 % des trames
+ * signées de la place ignorées par notre code, dont les huit accepts d'un payé qui nous
+ * écrivait depuis le matin.
+ *
+ * On met donc le nonce entre guillemets AVANT le parse. Le motif n'atteint que l'enveloppe :
+ * dans le champ `text`, qui est une chaîne JSON, les guillemets sont échappés (`\"nonce\"`),
+ * donc un nonce interne à une trame tclk1 n'est jamais touché. Le témoin le prouve.
+ */
+export function protegerNonce(json) {
+  return String(json ?? "").replace(/(^|[{,])(\s*)"nonce"(\s*):(\s*)(-?\d+)(\s*)([,}])/g,
+    (_, avant, e1, e2, e3, chiffres, e4, apres) => `${avant}${e1}"nonce"${e2}:${e3}"${chiffres}"${e4}${apres}`);
+}
+
+/** `JSON.parse` qui conserve le nonce de l'enveloppe tel qu'il a été signé. */
+export function parseAvecNonceExact(json) {
+  return JSON.parse(protegerNonce(json));
+}
+
 /** Les enregistrements d'un salon : {seq, ts, from, text, nonce, sig} + room. */
 export async function readRoom(room, limit = 200) {
   const res = await req(`${BASE}/r/${room}?format=json&limit=${limit}`, undefined, `read ${room}`);
   if (res.status === 404) return [];
   if (!res.ok) throw await refusal(`read ${room}`, res);
-  const view = await res.json();
+  const view = parseAvecNonceExact(await res.text());
   return (view.messages ?? []).map((m) => ({ ...m, room }));
 }
 
@@ -79,7 +104,7 @@ export async function readSince(room, since, wait = 10) {
   const res = await req(`${BASE}/r/${room}?since=${since}&wait=${wait}&format=json`, undefined, `poll ${room}`);
   if (res.status === 404) return { records: [], lastSeq: since, missed: false, absent: true };
   if (!res.ok) throw await refusal(`poll ${room}`, res);
-  const view = await res.json();
+  const view = parseAvecNonceExact(await res.text());
   const records = (view.messages ?? []).map((m) => ({ ...m, room }));
   const lastSeq = Number(view.last_seq ?? since) || since;
   const missed = since > 0 && Number(view.first_seq ?? 0) > since + 1 && records.length > 0;
@@ -95,7 +120,7 @@ export async function exportRoom(room) {
   for (const line of (await res.text()).split("\n")) {
     if (!line.trim()) continue;
     try {
-      out.push({ ...JSON.parse(line), room });
+      out.push({ ...parseAvecNonceExact(line), room });
     } catch {
       // ligne incomplète en fin d'export : on ré-exportera
     }
