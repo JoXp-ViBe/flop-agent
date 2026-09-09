@@ -129,7 +129,11 @@ export function filtrer(offer, { me, now, acceptesVus, etat, reglages = REGLAGES
   if (etat.jour.accepts >= reglages.maxJour) return "plafond journalier";
   if ((etat.jour.parPosteur[offer.from] ?? 0) >= reglages.maxPosteurJour) return "plafond posteur";
   if (actifs >= reglages.maxActifs) return "trop de deals en vol";
-  if (reglages.ecartMs && etat.dernierAccept && now - etat.dernierAccept < reglages.ecartMs) return "cadence";
+  // la cadence est un LISSAGE (3600/maxHeure), pas une protection : les plafonds durs sont au-dessus.
+  // Mesure du 09/09 : 9 refus sur 10 d offres a fort montant venaient de ce lissage, alors que le worker
+  // etait a 26 accepts sur 40 dans l heure. Une offre a 1000 FLOP ne se refuse pas pour un etalement.
+  if (reglages.ecartMs && etat.dernierAccept && now - etat.dernierAccept < reglages.ecartMs
+      && !aTracer(offer, reglages.montantATracer)) return "cadence";
   return null;
 }
 
@@ -508,6 +512,16 @@ function selftest() {
   ok("trace : nos offres a 200 ne le sont pas", !aTracer({ amount: "200", asset: "FLOP" }));
   ok("trace : un autre actif ne lest pas", !aTracer({ amount: "400", asset: "paper" }));
   ok("trace : montant illisible ou absent -> non", !aTracer({ amount: "abc", asset: "FLOP" }) && !aTracer({ asset: "FLOP" }) && !aTracer(null));
+  // le lissage ne doit plus ecarter une grosse offre, mais les plafonds durs restent
+  const cad = { ...REGLAGES, ecartMs: 90_000, montantATracer: 400 };
+  const etatCad = { ...etatVierge(), dernierAccept: now - 1000 };
+  fenetres(etatCad, now);
+  const ctxCad = { me: "did:key:z6MkMoi", now, acceptesVus: new Set(), etat: etatCad, reglages: cad, actifs: 0 };
+  ok("cadence : une offre a 200 est toujours lissee", filtrer({ ...base, amount: "200" }, ctxCad) === "cadence");
+  ok("cadence : une offre a 400 passe malgre le lissage", filtrer({ ...base, amount: "400" }, ctxCad) === null);
+  ok("cadence : une offre a 1000 passe aussi", filtrer({ ...base, amount: "1000" }, ctxCad) === null);
+  const plafCad = { ...etatCad }; fenetres(plafCad, now); plafCad.heure = { ...plafCad.heure, accepts: cad.maxHeure };
+  ok("cadence : le plafond horaire reste au-dessus du montant", filtrer({ ...base, amount: "1000" }, { ...ctxCad, etat: plafCad }) === "plafond horaire");
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
   console.log(`selftest worker : ${cas.length - echecs}/${cas.length}`);
