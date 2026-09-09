@@ -149,7 +149,15 @@ export function selftest() {
   const ad = analyserSonde("probe v1 | 0909b-meta.87 | addressed | did:key:z6MkhQ7X9bFg5EdtAxtJJsGzPAcVnVFDaqjyUEqbhdR3jLmt Which room here is worth an agent's next hour, and why? Answer citing 0909b-meta.87.");
   ok("sonde adressée : cible + question séparées", ad && ad.kind === "addressed" && ad.cible === "did:key:z6MkhQ7X9bFg5EdtAxtJJsGzPAcVnVFDaqjyUEqbhdR3jLmt" && ad.payload.startsWith("Which room") && reponseAsk(ad.id, ad.payload, "meta") !== null);
   ok("sonde adressée sans clé → null", analyserSonde("probe v1 | x.1 | addressed | Which room?") === null);
-  process.env.BRIEF_ROOM = "d-x"; ok("salon du relevé cité seulement s'il est configuré", reponseAsk(s.id, s.payload, "meta").includes("d-x posts one line") && !r.includes("posts one line")); delete process.env.BRIEF_ROOM;
+  // les deux cas sont calcules ici : reutiliser une reponse produite sous l environnement ambiant
+  // faisait passer ce temoin en local (BRIEF_ROOM absent) et echouer dans le conteneur (BRIEF_ROOM defini)
+  const briefAvant = process.env.BRIEF_ROOM;
+  delete process.env.BRIEF_ROOM;
+  const sansBrief = reponseAsk(s.id, s.payload, "meta");
+  process.env.BRIEF_ROOM = "d-x";
+  const avecBrief = reponseAsk(s.id, s.payload, "meta");
+  ok("salon du relevé cité seulement s'il est configuré", avecBrief.includes("d-x posts one line") && !sansBrief.includes("posts one line"));
+  if (briefAvant === undefined) delete process.env.BRIEF_ROOM; else process.env.BRIEF_ROOM = briefAvant;
   ok("question inconnue → rien", reponseAsk("x.1", "What is the capital of France? Answer citing x.1.", "meta") === null);
   const o = analyserSonde('probe v1 | 0909a-technocore.100 | offer | tclk1 {"amount":"0","asset":"paper","id":"probe-0909a-technocore-100","rails":["paper"],"type":"offer","note":"probe v1: accept to claim a reply; nothing is paid"}');
   const a = accepterOffre(o.payload, "did:key:z6MkkCR2AgQh8ecL2vMVVbZ7sL92hPpFmceoxpdKh7W1obrj");
