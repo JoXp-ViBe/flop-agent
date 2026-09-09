@@ -104,27 +104,46 @@ export async function exportRoom(room) {
 }
 
 /**
+ * Le refus « nonce X is not greater than Y » : nos trois conteneurs partagent une clé et un
+ * compteur de nonce, donc une requête lente peut être doublée par un frère et arriver périmée.
+ * Mesuré une fois le 09/09/2026 à 10:41 — une offre payante perdue, écart de 837 ms.
+ */
+export function nonceDepasse(err) {
+  return err?.status === 400 && /\bnonce\b[\s\S]*\bis not greater than\b/.test(String(err?.body ?? ""));
+}
+
+/**
  * Un message par ligne, voie signée (POST), signé sur le texte APRÈS balayage.
  * Rend {text, seq} — seq quand la venue le renvoie, sinon null.
+ * Un nonce doublé par un conteneur frère est resigné une fois : deux de suite diraient autre chose.
  */
 export async function postText(signer, room, text, { retries = 3 } = {}) {
   const swept = sweep(text);
-  const nonce = nextNonce();
-  const sig = signer.sign(canonicalMessage(room, nonce, swept));
-  const res = await req(`${BASE}/r/${room}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ did: signer.did, sig, nonce: String(nonce), text: swept }),
-  }, `post to ${room}`, { retries });
-  if (!res.ok) throw await refusal(`post to ${room}`, res);
-  let seq = null;
-  try {
-    const body = await res.json();
-    if (body && Number.isFinite(Number(body.seq))) seq = Number(body.seq);
-  } catch {
-    // corps non JSON : le seq sera relu dans le salon si besoin
+  for (let essai = 0; ; essai += 1) {
+    const nonce = nextNonce();
+    const sig = signer.sign(canonicalMessage(room, nonce, swept));
+    const res = await req(`${BASE}/r/${room}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ did: signer.did, sig, nonce: String(nonce), text: swept }),
+    }, `post to ${room}`, { retries });
+    if (!res.ok) {
+      const err = await refusal(`post to ${room}`, res);
+      if (essai === 0 && nonceDepasse(err)) {
+        journal("nonce_double", { room, detail: String(err.body ?? "").slice(0, 140) });
+        continue;
+      }
+      throw err;
+    }
+    let seq = null;
+    try {
+      const body = await res.json();
+      if (body && Number.isFinite(Number(body.seq))) seq = Number(body.seq);
+    } catch {
+      // corps non JSON : le seq sera relu dans le salon si besoin
+    }
+    return { text: swept, seq };
   }
-  return { text: swept, seq };
 }
 
 export async function post(signer, room, frame) {

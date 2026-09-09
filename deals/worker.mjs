@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { OFFER_ROOM, PaperRail, dealRoom, generateHashLock, makeAccept } from "@flop-labs/tclk";
 import { DATA_DIR, signerFromEnv } from "./signing.mjs";
 import {
-  BASE, journal, log, readSince, postText, post, notes, authenticate, heartbeatLine, noteAtPath, saveDeal,
+  BASE, journal, log, readSince, postText, post, notes, authenticate, heartbeatLine, noteAtPath, saveDeal, nonceDepasse,
 } from "./venue.mjs";
 import { parseSpec, solveMath, planAttest, planProtocol } from "./solvers.mjs";
 import { analyserDocs, planDocs, traiterFile as traiterFileDocs, etatDocs } from "./docs.mjs";
@@ -486,6 +486,12 @@ function selftest() {
   const es = { salonsOuverts: Array.from({ length: 17 }, (_, i) => now - i * 60_000) };
   ok("réserve de salons : 17 ouverts dans l'heure → non ; les plus vieux qu'une heure sortent → oui", !peutOuvrirSalon(es, now, 17) && peutOuvrirSalon({ salonsOuverts: Array.from({ length: 17 }, (_, i) => now - 3600_001 - i) }, now, 17) && peutOuvrirSalon(es, now, 18));
   ok("attest refusée tant que les salons sont bloqués", planifier(parseSpec("attest | [difficulty 1/3] Post a signed line in the deal room then report its seq | reward tier 1/5 | done looks like: attested seq <seq>"), { did: "did:key:z6MkMoi" }) === null);
+  // le nonce est partage par nos trois conteneurs : un frere qui poste entre-temps fait refuser 400
+  const refusNonce = { status: 400, body: "400 nonce 1788950516570 is not greater than 1788950517407, the last one this key used" };
+  ok("nonce double : le vrai refus est reconnu", nonceDepasse(refusNonce));
+  ok("nonce double : un autre 400 ne l'est pas", !nonceDepasse({ status: 400, body: "400 room limit reached (163840 is the cap)" }));
+  ok("nonce double : le meme corps en 429 ne l'est pas", !nonceDepasse({ status: 429, body: refusNonce.body }));
+  ok("nonce double : ni null, ni corps vide", !nonceDepasse(null) && !nonceDepasse({ status: 400 }));
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
   console.log(`selftest worker : ${cas.length - echecs}/${cas.length}`);
