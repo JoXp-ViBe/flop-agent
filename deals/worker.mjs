@@ -49,6 +49,8 @@ export const REGLAGES = {
   // ouverts dans la journée, refus « room-creation budget spent » avec retry-after ≈ 27 min) ; le payeur, même IP,
   // a besoin d'un salon par offre : le worker en laisse quelques-uns
   maxSalonsHeure: entier("WORKER_ROOMS_PER_HOUR", 17),
+  // au-dessus de ce montant, un refus est dit : on veut savoir pourquoi une offre qui vaut la peine nous echappe
+  montantATracer: entier("WORKER_TRACE_AMOUNT", 400),
 };
 if (!REGLAGES.ecartMs && REGLAGES.maxHeure > 0) REGLAGES.ecartMs = Math.floor(3600_000 / REGLAGES.maxHeure);
 const ETAT = join(DATA_DIR, "worker.json");
@@ -102,6 +104,13 @@ export function fenetres(etat, now = Date.now()) {
   const date = d.slice(0, 10), heure = d.slice(0, 13);
   if (etat.jour.date !== date) etat.jour = { date, accepts: 0, parPosteur: {} };
   if (etat.heure.cle !== heure) etat.heure = { cle: heure, accepts: 0 };
+}
+
+/** Une offre assez grosse pour qu'un refus merite d'etre dit (montant en FLOP, seuil regle). */
+export function aTracer(offer, seuil = REGLAGES.montantATracer) {
+  if (String(offer?.asset ?? "").toUpperCase() !== "FLOP") return false;
+  const m = Number(offer?.amount);
+  return Number.isFinite(m) && m >= seuil;
 }
 
 // ----- filtre d'une offre : une raison de la laisser, ou null ---------------------------------
@@ -414,6 +423,7 @@ async function boucle() {
         etat.stats.offres += 1;
         const raison = filtrer(frame, { me: signer.did, now, acceptesVus, etat, actifs: actifs.size });
         if (raison) {
+          if (aTracer(frame)) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison });
           // plafond atteint : on n'accepte pas, mais on APPREND quand même les questions de documents
           // (mesuré le 08/09 : le plafond horaire coupait aussi la file de l'oracle, qui restait vide)
           const ctx = frame.job?.context ?? "";
@@ -492,6 +502,12 @@ function selftest() {
   ok("nonce double : un autre 400 ne l'est pas", !nonceDepasse({ status: 400, body: "400 room limit reached (163840 is the cap)" }));
   ok("nonce double : le meme corps en 429 ne l'est pas", !nonceDepasse({ status: 429, body: refusNonce.body }));
   ok("nonce double : ni null, ni corps vide", !nonceDepasse(null) && !nonceDepasse({ status: 400 }));
+  // le refus d une offre a fort montant doit etre dit : cinq offres a 400 FLOP nous ont echappe en silence le 09/09
+  ok("trace : une offre a 400 FLOP est tracee", aTracer({ amount: "400", asset: "FLOP" }));
+  ok("trace : au-dessus du seuil aussi", aTracer({ amount: "1000", asset: "FLOP" }));
+  ok("trace : nos offres a 200 ne le sont pas", !aTracer({ amount: "200", asset: "FLOP" }));
+  ok("trace : un autre actif ne lest pas", !aTracer({ amount: "400", asset: "paper" }));
+  ok("trace : montant illisible ou absent -> non", !aTracer({ amount: "abc", asset: "FLOP" }) && !aTracer({ asset: "FLOP" }) && !aTracer(null));
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
   console.log(`selftest worker : ${cas.length - echecs}/${cas.length}`);
