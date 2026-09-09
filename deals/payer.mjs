@@ -434,9 +434,12 @@ async function boucle() {
       for (const d of verrouilles) await absorberSalon(d, OFFER_ROOM, vue.records);
       for (const r of vue.records) {
         const a = authenticate(r);
-        if (a.reason !== null || !a.frame || a.frame.type !== "accept") continue;
+        if (!a.frame || a.frame.type !== "accept") continue;
         const d = etat.actifs[a.frame.ref];
         if (!d || a.frame.from === signer.did) continue;
+        // un accept de NOTRE offre qui ne passe pas la vérification laisse une trace (mesuré le 09/09 : un payé
+        // a écrit quatre accepts jamais verrouillés sans qu'on sache pourquoi)
+        if (a.reason !== null) { journal("payer_accept_invalide", { id: a.frame.ref, payee: r.from ?? null, from: a.frame.from, reason: a.reason, seq: r.seq }); continue; }
         if (d.etape !== "offerte") { journal("payer_accept_ignore", { id: a.frame.ref, payee: a.frame.from, motif: "already " + d.etape }); continue; }
         if (Date.now() > d.offer.expiresMs) { journal("payer_accept_ignore", { id: a.frame.ref, payee: a.frame.from, motif: "offer expired" }); continue; }
         d.accepts = d.accepts ?? [];
