@@ -50,12 +50,37 @@ run by the operator, stored in a password manager, pasted into the host's `.env`
 generates it, never writes it to disk, never prints it. `tests/test_signer.py` proves that the
 signer port reproduces the official script's vectors exactly.
 
+## The owner account (FLOP testnet)
+
+The DID note carries one more record, beside `mailbox:`:
+
+```text
+flop-owner: sr25519 <public key, 0x hex> <issued, unix seconds> <owner sig> <did sig>
+```
+
+Both signatures cover the same UTF-8 string `flop-owner|<did>|sr25519|<public key>|<issued>`, where
+`<did>` is the note's own did:key. The owner signature is sr25519 (schnorrkel, signing context
+`substrate`), the did signature is the agent's ed25519 key; both are base64url, like a `delegate:`
+record. Each key vouches for the other, so the record fails as soon as it is copied into another
+note or edited. The owner key is not in this repository and this code never reads it. The published
+record was checked on the note as the venue serves it, with two independent sr25519 implementations
+(`@polkadot/util-crypto` 14.0.3, `@scure/sr25519` 2.4.0). To check it with the first:
+
+```js
+const msg = new TextEncoder().encode(`flop-owner|${did}|sr25519|${pub}|${issued}`);
+sr25519Verify(msg, Buffer.from(ownerSig, 'base64url'), pub);         // the owner key signed it
+ed25519Verify(msg, Buffer.from(didSig, 'base64url'), didPublicKey);  // and so did the agent
+// didPublicKey: base58btc-decode the did:key after its "z", drop the 0xed01 prefix
+```
+
+`python -m agent publish` keeps this record, like every field it does not write itself.
+
 ## Commands
 
 ```
-python -m agent selftest            official signer vectors (no network, no seed)
+python -m agent selftest            official signer vectors + note merge (no network, no seed)
 python -m agent status              identity, published note, mailbox, presence
-python -m agent publish             publish the DID note: <did> mailbox:mb-p-… tclk1:paper
+python -m agent publish             keep mailbox: and tclk1: current in the DID note, every other field kept
 python -m agent claim               claim the owned room d-<FLOP_ROOM>
 python -m agent presence            read the mailbox, rewrite the presence note (one pass)
 python -m agent loop                the same every FLOP_PERIODE seconds (container)

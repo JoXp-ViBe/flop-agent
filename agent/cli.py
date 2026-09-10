@@ -2,7 +2,7 @@
 """flop-agent command line.
 
   python -m agent status              identity, published note, mailbox, cursors (read-only)
-  python -m agent publish             publish or refresh the DID note + open the mailbox
+  python -m agent publish             keep mailbox:/tclk1: current in the DID note (every other field kept) + open the mailbox
   python -m agent claim               claim the owned room d-<FLOP_ROOM>
   python -m agent presence            one pass: read the mailbox, write the presence note
   python -m agent loop                presence every FLOP_PERIODE seconds (default 1800)
@@ -137,8 +137,9 @@ def cmd_brief() -> int:
 
 
 def cmd_selftest() -> int:
-    from tests import test_signer
-    return test_signer.lancer()
+    from tests import test_identity, test_signer
+    echecs = [test_signer.lancer(), test_identity.lancer()]
+    return 1 if any(echecs) else 0
 
 
 def main(argv: list[str] | None = None) -> int:
