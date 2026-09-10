@@ -85,6 +85,10 @@ class Technocore:
                         attente = max(1, int(e.headers.get("Retry-After", "5")))
                     except ValueError:
                         pass
+                    # « revenez dans 20 minutes » : attendre quatre fois 60 s n'y change rien, et le 10/09 le
+                    # budget de création de salons (Retry-After ~1 000 s) a fait dépasser son délai au relevé
+                    if attente > 120:
+                        return e.code, texte
                     time.sleep(min(attente, 60))
                     continue
                 return e.code, texte
