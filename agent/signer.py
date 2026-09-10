@@ -9,7 +9,7 @@ script officiel lui-même : si ce port dérive, le test le dit avant le serveur 
 CE QUI EST PLUS STRICT QUE L'OFFICIEL, ET POURQUOI
   La graine doit être 64 caractères hexadécimaux. Le script officiel accepte aussi une phrase
   et la hache : pratique pour une démo, mauvais pour une identité qui vaut un airdrop. Ici une
-  identité vient de `sign.py keygen`, rangée dans Bitwarden, injectée par FLOP_SEED. Jamais
+  identité vient de `sign.py keygen`, rangée dans un coffre hors du dépôt, injectée par FLOP_SEED. Jamais
   générée par ce code, jamais écrite sur le disque, jamais dans un journal.
 
 CHAÎNES CANONIQUES (ce que le serveur vérifie, sur le texte APRÈS balayage)
