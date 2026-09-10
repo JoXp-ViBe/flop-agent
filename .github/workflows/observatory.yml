@@ -90,16 +90,34 @@ jobs:
           fi
           git add docs/data.json docs/history.json
           git commit -m "observatory: hourly measurement of the tclk board"
-          # Someone can push during the minute this measurement takes, and then the push is
-          # rejected. Rebase and retry: the series is append-only, so replaying our single commit
-          # on top of theirs is always the right merge. Three tries, then give up loudly.
+          # Someone can push while this measurement runs, and then our push is rejected. A rebase
+          # is the wrong tool here: both sides rewrite the whole of data.json and history.json, so
+          # git stops on a content conflict it cannot resolve, and the run dies red on something
+          # that is not a defect. Measured on 2026-09-10: two runs were created in the same second,
+          # one by the push event that this file's own paths trigger and one by a manual dispatch,
+          # and the loser failed on exactly that conflict while the winner published fine.
+          #
+          # So the loser gives up, quietly and on purpose. The export ring only holds about half an
+          # hour and a run happens every hour, so a measurement dropped because another run already
+          # holds the branch costs nothing and must not page anyone. Exiting 0 here also keeps every
+          # guard above honest: nothing is re-measured after them, so nothing escapes them.
           for attempt in 1 2 3; do
             if git push; then
               echo "pushed on attempt $attempt"
               exit 0
             fi
-            echo "push rejected, rebasing onto the remote and retrying"
-            git pull --rebase --autostash origin main || exit 1
+            git fetch origin main
+            ours=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("docs/data.json","utf8")).mesure_le)')
+            theirs=$(git show origin/main:docs/data.json > /tmp/theirs.json && node -e 'console.log(JSON.parse(require("fs").readFileSync("/tmp/theirs.json","utf8")).mesure_le)')
+            echo "push rejected. ours=$ours theirs=$theirs"
+            if [ -n "$theirs" ]; then
+              echo "a concurrent run already holds the branch; dropping this measurement on purpose"
+              echo "(the ring covers about half an hour and the next run is at most an hour away)"
+              exit 0
+            fi
+            echo "the remote has no measurement to compare against, retrying the push"
           done
+          echo "three pushes rejected without a readable remote measurement"
+          exit 1
           echo "still rejected after three tries; the measurement is in the job log, not in the repo"
           exit 1
