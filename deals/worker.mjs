@@ -51,6 +51,9 @@ export const REGLAGES = {
   maxSalonsHeure: entier("WORKER_ROOMS_PER_HOUR", 17),
   // au-dessus de ce montant, un refus est dit : on veut savoir pourquoi une offre qui vaut la peine nous echappe
   montantATracer: entier("WORKER_TRACE_AMOUNT", 400),
+  // notre boite (mb-p-...). Une offre qu'un payeur nous y adresse passe au-dessus du plafond horaire, qui
+  // est un reglage de rythme et pas une protection. Vide = fonction eteinte.
+  boite: (process.env.WORKER_MAILBOX ?? "").trim(),
 };
 if (!REGLAGES.ecartMs && REGLAGES.maxHeure > 0) REGLAGES.ecartMs = Math.floor(3600_000 / REGLAGES.maxHeure);
 const ETAT = join(DATA_DIR, "worker.json");
@@ -125,7 +128,7 @@ export function aTracer(offer, seuil = REGLAGES.montantATracer) {
 }
 
 // ----- filtre d'une offre : une raison de la laisser, ou null ---------------------------------
-export function filtrer(offer, { me, now, acceptesVus, etat, reglages = REGLAGES, actifs = 0 }) {
+export function filtrer(offer, { me, now, acceptesVus, etat, reglages = REGLAGES, actifs = 0, dirigee = false }) {
   if (offer.type !== "offer") return "pas une offre";
   if (offer.from === me) return "notre propre offre";
   if (offer.role !== "payer") return "le posteur n'est pas payeur";
@@ -136,7 +139,10 @@ export function filtrer(offer, { me, now, acceptesVus, etat, reglages = REGLAGES
   if (typeof offer.job?.context !== "string" || !offer.job.context) return "sans job.context";
   if (acceptesVus.has(offer.id)) return "déjà acceptée par un autre";
   fenetres(etat, now);
-  if (etat.heure.accepts >= reglages.maxHeure) return "plafond horaire";
+  // une offre qui nous est ADRESSEE (le payeur nous a choisis, notre boite le dit) passe au-dessus du
+  // plafond horaire et du lissage, jamais des plafonds journalier et par payeur, ni des deals en vol.
+  // Mesure du 10/09 : sur 20 offres adressees a nous, 2 acceptees, 8 refusees ici, 10 sans trace.
+  if (etat.heure.accepts >= reglages.maxHeure && !dirigee) return "plafond horaire";
   if (etat.jour.accepts >= reglages.maxJour) return "plafond journalier";
   if ((etat.jour.parPosteur[offer.from] ?? 0) >= reglages.maxPosteurJour) return "plafond posteur";
   if (actifs >= reglages.maxActifs) return "trop de deals en vol";
@@ -144,8 +150,40 @@ export function filtrer(offer, { me, now, acceptesVus, etat, reglages = REGLAGES
   // Mesure du 09/09 : 9 refus sur 10 d offres a fort montant venaient de ce lissage, alors que le worker
   // etait a 26 accepts sur 40 dans l heure. Une offre a 1000 FLOP ne se refuse pas pour un etalement.
   if (reglages.ecartMs && etat.dernierAccept && now - etat.dernierAccept < reglages.ecartMs
-      && !aTracer(offer, reglages.montantATracer)) return "cadence";
+      && !aTracer(offer, reglages.montantATracer) && !dirigee) return "cadence";
   return null;
+}
+
+/**
+ * Marque les offres deposees dans notre boite. Recoit la sortie de authenticate : seule une offre
+ * signee par son payeur, encore vivante, compte. Rend les offres nouvellement marquees.
+ */
+export function marquerDirigees(auths, dirigees, t) {
+  const nouvelles = [];
+  for (const a of auths) {
+    if (a.reason !== null || a.frame?.type !== "offer") continue;
+    if (!(Number(a.frame.expiresMs) > t) || dirigees.has(a.frame.id)) continue;
+    dirigees.set(a.frame.id, t);
+    nouvelles.push(a.frame);
+  }
+  for (const [id, vu] of dirigees) if (t - vu > 3_600_000) dirigees.delete(id);
+  return nouvelles;
+}
+
+/** Garde une offre refusee pour un plafond le temps que la boite dise si elle nous est adressee. */
+export function retenir(enAttente, frame, now, max = 500) {
+  enAttente.set(frame.id, { frame, t: now });
+  while (enAttente.size > max) enAttente.delete(enAttente.keys().next().value);
+}
+
+/** Les offres retenues que la boite confirme depuis : a refiltrer, exemptees. Oublie les trop vieilles. */
+export function reprendreDirigees(enAttente, dirigees, now, retenueMs = 120_000) {
+  const reprises = [];
+  for (const [id, v] of enAttente) {
+    if (dirigees.has(id)) { reprises.push({ frame: v.frame, repris: true }); enAttente.delete(id); }
+    else if (now - v.t > retenueMs) enAttente.delete(id);
+  }
+  return reprises;
 }
 
 // ----- la spec : aperçu du tableau ou note complète -------------------------------------------
@@ -412,6 +450,37 @@ async function boucle() {
   process.on("SIGTERM", () => { arret = true; sauverEtat(etat); });
   process.on("SIGINT", () => { arret = true; sauverEtat(etat); });
 
+  // offres ADRESSEES a nous : un veilleur a part lit notre boite en sondage long, une lecture en vol a la
+  // fois (quelques requetes par minute au plus, quel que soit le debit du tableau), et marque chaque offre
+  // qu'un payeur y depose. Mesure du 10/09 : la notification arrive a moins de 5 s de l'offre du tableau,
+  // avant ou apres ; une offre refusee pour un plafond est donc retenue deux minutes, et reprise des que
+  // la boite la confirme. La boite ne fait que marquer : l'offre vient du tableau, l'accept y part.
+  const dirigees = new Map();    // id -> vue a (ms)
+  const enAttente = new Map();   // id -> { frame, t }
+  const veilleBoite = async () => {
+    let depuis = null;
+    let echecs = 0;
+    while (!arret) {
+      try {
+        const rb = await readSince(REGLAGES.boite, depuis ?? 0, depuis === null ? 0 : 25);
+        if (rb.absent) throw new Error(`boite ${REGLAGES.boite} introuvable (404)`);
+        const nouvelles = marquerDirigees(rb.records.map(authenticate), dirigees, Date.now());
+        for (const f of nouvelles) journal("offre_dirigee_vue", { id: f.id, de: f.from, montant: f.amount });
+        // temoin de la premiere lecture : sans lui, une veille qui ne lit rien ressemblerait a une boite vide
+        if (depuis === null) journal("boite_veille", { boite: REGLAGES.boite, depuis: rb.lastSeq, vivantes: nouvelles.length });
+        depuis = rb.lastSeq;
+        if (echecs) journal("boite_retablie", { apres: echecs });
+        echecs = 0;
+        await new Promise((res) => setTimeout(res, 1000));   // plancher : jamais plus d'une lecture par seconde
+      } catch (e) {
+        echecs += 1;
+        if (echecs === 1 || echecs % 20 === 0) journal("boite_erreur", { echecs, detail: String(e.message ?? e).slice(0, 160) });
+        await new Promise((res) => setTimeout(res, Math.min(300_000, 15_000 * echecs)));
+      }
+    }
+  };
+  if (REGLAGES.boite) veilleBoite().catch((e) => log("", `veille de la boite arretee : ${String(e.message ?? e).slice(0, 120)}`));
+
   if (!etat.since) {
     const r = await readSince(OFFER_ROOM, 0, 0);
     etat.since = r.lastSeq;
@@ -425,6 +494,8 @@ async function boucle() {
       if (r.missed) journal("board_missed", { since: etat.since });
       const now = Date.now();
       const auth = r.records.map(authenticate).filter((a) => a.reason === null);
+      const reprises = reprendreDirigees(enAttente, dirigees, now);
+      for (const { frame } of reprises) journal("offre_dirigee_reprise", { id: frame.id, de: frame.from, montant: frame.amount });
       for (const { frame } of auth) {
         if (frame.type === "accept") noter(frame.ref);
         if ((frame.type === "lock" || frame.type === "receipt") && actifs.has(frame.contract)) {
@@ -433,15 +504,19 @@ async function boucle() {
           if (frame.type === "receipt" && frame.from === d.offer.from) d.boardReceipt = frame.outcome;
         }
       }
-      for (const { frame } of auth) {
+      for (const { frame, repris } of [...reprises, ...auth]) {
         if (frame.type !== "offer") continue;
-        etat.stats.offres += 1;
-        const raison = filtrer(frame, { me: signer.did, now, acceptesVus, etat, actifs: actifs.size });
+        if (!repris) etat.stats.offres += 1;
+        const dirigee = dirigees.has(frame.id);
+        const raison = filtrer(frame, { me: signer.did, now, acceptesVus, etat, actifs: actifs.size, dirigee });
         if (raison) {
-          if (aTracer(frame)) {
+          // refusee pour un plafond et pas encore confirmee par la boite : gardee deux minutes
+          if (REGLAGES.boite && !dirigee && !refusInstructif(raison)) retenir(enAttente, frame, now);
+          if (aTracer(frame) || dirigee) {
             etat.stats.refusFortMontant = etat.stats.refusFortMontant ?? {};
             etat.stats.refusFortMontant[raison] = (etat.stats.refusFortMontant[raison] ?? 0) + 1;
-            if (refusInstructif(raison)) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison });
+            // une offre qui nous est adressee ne se refuse jamais en silence, quelle que soit la raison
+            if (dirigee || refusInstructif(raison)) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison, dirigee });
           }
           // plafond atteint : on n'accepte pas, mais on APPREND quand même les questions de documents
           // (mesuré le 08/09 : le plafond horaire coupait aussi la file de l'oracle, qui restait vide)
@@ -455,9 +530,15 @@ async function boucle() {
         const spec = await lireSpec(frame);
         if (spec && spec.family === "validation") { proposerValidation(frame, spec); continue; }
         const plan = planifier(spec, signer) ?? await planTables(spec);
-        if (!plan) continue;
+        if (!plan) {
+          if (dirigee) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison: spec ? `aucun plan pour ${spec.family}` : "spec illisible", dirigee });
+          continue;
+        }
         etat.stats.candidats += 1;
-        if (acceptesVus.has(frame.id)) continue;   // quelqu'un a accepté pendant qu'on lisait la spec
+        if (acceptesVus.has(frame.id)) {   // quelqu'un a accepté pendant qu'on lisait la spec
+          if (dirigee) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison: "acceptée par un autre pendant la lecture", dirigee });
+          continue;
+        }
         await accepter(frame, spec, plan, signer, etat);
       }
       etat.since = r.lastSeq;
@@ -488,11 +569,18 @@ function selftest() {
   ok("déjà acceptée refusée", filtrer(base, { ...ctx(), acceptesVus: new Set(["0xoffre1"]) }) === "déjà acceptée par un autre");
   const plein = ctx(); fenetres(plein.etat, now); plein.etat.heure.accepts = REGLAGES.maxHeure;
   ok("plafond horaire", filtrer(base, plein) === "plafond horaire");
+  ok("adressee a nous : passe au-dessus du plafond horaire", filtrer(base, { ...plein, dirigee: true }) === null);
+  const jourPlein = ctx(); fenetres(jourPlein.etat, now); jourPlein.etat.jour.accepts = REGLAGES.maxJour;
+  ok("adressee a nous : le plafond journalier reste dur", filtrer(base, { ...jourPlein, dirigee: true }) === "plafond journalier");
+  const posteurPlein = ctx(); fenetres(posteurPlein.etat, now); posteurPlein.etat.jour.parPosteur[base.from] = REGLAGES.maxPosteurJour;
+  ok("adressee a nous : le plafond par payeur reste dur", filtrer(base, { ...posteurPlein, dirigee: true }) === "plafond posteur");
+  ok("adressee a nous : les deals en vol restent durs", filtrer(base, { ...ctx(), actifs: REGLAGES.maxActifs, dirigee: true }) === "trop de deals en vol");
   const posteur = ctx(); fenetres(posteur.etat, now); posteur.etat.jour.parPosteur[base.from] = REGLAGES.maxPosteurJour;
   ok("plafond posteur", filtrer(base, posteur) === "plafond posteur");
   ok("trop en vol", filtrer(base, { ...ctx(), actifs: REGLAGES.maxActifs }) === "trop de deals en vol");
   const recent = ctx(); recent.etat.dernierAccept = now - 1000;
   ok("cadence : trop tôt après le dernier accept", filtrer(base, recent) === "cadence");
+  ok("adressee a nous : pas de lissage", filtrer(base, { ...recent, dirigee: true }) === null);
   const ancien = ctx(); ancien.etat.dernierAccept = now - REGLAGES.ecartMs - 1;
   ok("cadence : écart respecté", filtrer(base, ancien) === null);
   const e = etatVierge(); fenetres(e, now); e.jour.accepts = 5; fenetres(e, now + 86_400_000);
@@ -555,8 +643,26 @@ function selftest() {
   ok("nonce : celui du texte echappe nest PAS touche", protegerNonce('{"text":"tclk1 {\\"nonce\\":123}","nonce":456}') === '{"text":"tclk1 {\\"nonce\\":123}","nonce":"456"}');
   ok("nonce : aucun autre champ numerique touche", protegerNonce('{"seq":123,"nonce":456}') === '{"seq":123,"nonce":"456"}');
   ok("nonce : entree vide ou nulle ne casse pas", protegerNonce("") === "" && protegerNonce(null) === "");
+  // la boite ne fait que MARQUER : seule une offre signee et vivante y compte
+  const offreBoite = { ...base, id: "0xdirigee", expiresMs: now + 600_000 };
+  const vues = new Map();
+  ok("boite : une offre signee et vivante est marquee", marquerDirigees([{ reason: null, frame: offreBoite }], vues, now).length === 1 && vues.has("0xdirigee"));
+  ok("boite : la meme offre n est pas marquee deux fois", marquerDirigees([{ reason: null, frame: offreBoite }], vues, now).length === 0);
+  ok("boite : une signature fausse ne marque rien", marquerDirigees([{ reason: "signature absente ou fausse", frame: { ...offreBoite, id: "0xfausse" } }], vues, now).length === 0 && !vues.has("0xfausse"));
+  ok("boite : un accept ne marque rien", marquerDirigees([{ reason: null, frame: { ...offreBoite, id: "0xacc", type: "accept" } }], vues, now).length === 0 && !vues.has("0xacc"));
+  ok("boite : une offre expiree ne marque rien", marquerDirigees([{ reason: null, frame: { ...offreBoite, id: "0xvieille", expiresMs: now - 1 } }], vues, now).length === 0 && !vues.has("0xvieille"));
+  ok("boite : un message non signe ne s authentifie pas", authenticate({ room: "mb-p-x", from: base.from, text: "tclk1 " + JSON.stringify(offreBoite) }).reason !== null);
+  const attente = new Map();
+  retenir(attente, offreBoite, now); retenir(attente, { ...base, id: "0xjamais" }, now);
+  const rep = reprendreDirigees(attente, vues, now + 5_000);
+  ok("reprise : l offre confirmee par la boite repart", rep.length === 1 && rep[0].frame.id === "0xdirigee" && rep[0].repris === true && !attente.has("0xdirigee"));
+  ok("reprise : l offre non confirmee reste retenue", attente.has("0xjamais"));
+  ok("reprise : au-dela de deux minutes elle est oubliee", reprendreDirigees(attente, vues, now + 121_000).length === 0 && !attente.has("0xjamais"));
+  const pleine = new Map(); for (let k = 0; k < 505; k += 1) retenir(pleine, { ...base, id: "0x" + k }, now);
+  ok("retenue bornee a 500, les plus anciennes sortent", pleine.size === 500 && !pleine.has("0x0") && pleine.has("0x504"));
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
+  for (const [nom, r] of cas) if (!r) console.log(`  ECHOUE : ${nom}`);
   console.log(`selftest worker : ${cas.length - echecs}/${cas.length}`);
   return echecs ? 1 : 0;
 }
