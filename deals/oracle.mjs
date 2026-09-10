@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Le client de l'oracle de langage : le worker ne détient aucune clé. Il dépose une demande
-// dans le volume partagé (data/oracle/req) et un démon sur l'hôte (flop_oracle.py) la sert par
-// `hermes -z` sur l'abonnement ChatGPT du founder, avec un modèle léger. Aucun port, aucun secret
-// ici. Une réponse absente après le délai est une ERREUR nommée, jamais une réponse vide.
+// dans le volume partagé (data/oracle/req) et un démon sur l'hôte (flop_oracle.py) la sert par un
+// client de modèle de langage léger, configuré par l'opérateur hors du dépôt. Aucun port, aucun
+// secret ici. Une réponse absente après le délai est une ERREUR nommée, jamais une réponse vide.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";

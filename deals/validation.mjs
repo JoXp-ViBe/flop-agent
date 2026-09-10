@@ -4,7 +4,7 @@
 // que le posteur nous confie. « Validators are the scarce role » (programme blockrewards) :
 // +6 par verdict juste, −6 par verdict faux, scoré comme calibration. Ces offres restent
 // ouvertes une dizaine de minutes et sont moins disputées : on peut se permettre de réfléchir
-// AVANT d'accepter — l'oracle (profil Hermès sans outils) rend PASS ou FAIL avec sa phrase, et
+// AVANT d'accepter — l'oracle (un modèle léger, sans outils) rend PASS ou FAIL avec sa phrase, et
 // l'offre n'est acceptée que si ce verdict a une forme exacte. Un budget serré mesure la
 // justesse avant d'ouvrir plus grand.
 
