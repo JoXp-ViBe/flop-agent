@@ -106,6 +106,17 @@ export function fenetres(etat, now = Date.now()) {
   if (etat.heure.cle !== heure) etat.heure = { cle: heure, accepts: 0 };
 }
 
+/**
+ * Un refus merite-t-il une LIGNE de journal, ou seulement un compteur ?
+ * Les plafonds se lisent deja dans les compteurs d'etat : repeter la ligne 3 351 fois ne dit
+ * rien de plus et occupait 21,8 % du journal. Les autres raisons, elles, ne sont pas comptees
+ * ailleurs et chacune apprend quelque chose.
+ */
+export function refusInstructif(raison) {
+  return typeof raison === "string" && raison.length > 0
+    && !/^plafond|^trop de deals|^cadence/.test(raison);
+}
+
 /** Une offre assez grosse pour qu'un refus merite d'etre dit (montant en FLOP, seuil regle). */
 export function aTracer(offer, seuil = REGLAGES.montantATracer) {
   if (String(offer?.asset ?? "").toUpperCase() !== "FLOP") return false;
@@ -427,7 +438,11 @@ async function boucle() {
         etat.stats.offres += 1;
         const raison = filtrer(frame, { me: signer.did, now, acceptesVus, etat, actifs: actifs.size });
         if (raison) {
-          if (aTracer(frame)) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison });
+          if (aTracer(frame)) {
+            etat.stats.refusFortMontant = etat.stats.refusFortMontant ?? {};
+            etat.stats.refusFortMontant[raison] = (etat.stats.refusFortMontant[raison] ?? 0) + 1;
+            if (refusInstructif(raison)) journal("offre_refusee", { id: frame.id, de: frame.from, montant: frame.amount, raison });
+          }
           // plafond atteint : on n'accepte pas, mais on APPREND quand même les questions de documents
           // (mesuré le 08/09 : le plafond horaire coupait aussi la file de l'oracle, qui restait vide)
           const ctx = frame.job?.context ?? "";
@@ -512,6 +527,13 @@ function selftest() {
   ok("trace : nos offres a 200 ne le sont pas", !aTracer({ amount: "200", asset: "FLOP" }));
   ok("trace : un autre actif ne lest pas", !aTracer({ amount: "400", asset: "paper" }));
   ok("trace : montant illisible ou absent -> non", !aTracer({ amount: "abc", asset: "FLOP" }) && !aTracer({ asset: "FLOP" }) && !aTracer(null));
+  // un plafond se compte, il ne s'ecrit pas ; les autres raisons s'ecrivent
+  ok("refus : un plafond ne merite pas de ligne", !refusInstructif("plafond horaire") && !refusInstructif("plafond journalier") && !refusInstructif("plafond posteur"));
+  ok("refus : trop de deals en vol non plus", !refusInstructif("trop de deals en vol"));
+  ok("refus : la cadence non plus", !refusInstructif("cadence"));
+  ok("refus : une offre prise par un autre, si", refusInstructif("déjà acceptée par un autre"));
+  ok("refus : un posteur mal déclaré, si", refusInstructif("le posteur n'est pas payeur"));
+  ok("refus : une raison vide ou absente ne s'écrit pas", !refusInstructif("") && !refusInstructif(null) && !refusInstructif(undefined));
   // le lissage ne doit plus ecarter une grosse offre, mais les plafonds durs restent
   const cad = { ...REGLAGES, ecartMs: 90_000, montantATracer: 400 };
   const etatCad = { ...etatVierge(), dernierAccept: now - 1000 };
