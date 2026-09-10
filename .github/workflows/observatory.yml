@@ -90,4 +90,16 @@ jobs:
           fi
           git add docs/data.json docs/history.json
           git commit -m "observatory: hourly measurement of the tclk board"
-          git push
+          # Someone can push during the minute this measurement takes, and then the push is
+          # rejected. Rebase and retry: the series is append-only, so replaying our single commit
+          # on top of theirs is always the right merge. Three tries, then give up loudly.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected, rebasing onto the remote and retrying"
+            git pull --rebase --autostash origin main || exit 1
+          done
+          echo "still rejected after three tries; the measurement is in the job log, not in the repo"
+          exit 1
