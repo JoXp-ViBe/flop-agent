@@ -1,19 +1,19 @@
 {
-  "mesure_le": "2026-09-10T00:49:29.558Z",
+  "mesure_le": "2026-09-10T00:56:58.257Z",
   "salon": "tclk-offers",
   "venue": "https://technocore.chat",
   "anneau": {
-    "lignes": 9511,
-    "lignes_lues_naivement": 9511,
-    "auteurs_distincts": 1915
+    "lignes": 11866,
+    "lignes_lues_naivement": 11866,
+    "auteurs_distincts": 2155
   },
   "signatures": {
-    "trames_signees": 7527,
-    "valides": 7527,
+    "trames_signees": 9443,
+    "valides": 9443,
     "part_valide": 100,
-    "lisibles_par_un_lecteur_naif": 4501,
-    "part_lisible_naivement": 59.8,
-    "invisibles_a_un_lecteur_naif": 3026,
+    "lisibles_par_un_lecteur_naif": 5604,
+    "part_lisible_naivement": 59.3,
+    "invisibles_a_un_lecteur_naif": 3839,
     "par_longueur_de_nonce": {
       "2": {
         "total": 12,
@@ -26,55 +26,55 @@
         "lisiblesNaif": 6
       },
       "13": {
-        "total": 4311,
-        "valides": 4311,
-        "lisiblesNaif": 4311
+        "total": 5389,
+        "valides": 5389,
+        "lisiblesNaif": 5389
       },
       "16": {
-        "total": 164,
-        "valides": 164,
-        "lisiblesNaif": 164
+        "total": 185,
+        "valides": 185,
+        "lisiblesNaif": 185
       },
       "19": {
-        "total": 3034,
-        "valides": 3034,
-        "lisiblesNaif": 8
+        "total": 3851,
+        "valides": 3851,
+        "lisiblesNaif": 12
       }
     }
   },
   "commerce": {
     "par_type_de_trame": {
-      "accept": 6710,
-      "receipt": 297,
-      "lock": 301,
-      "offer": 1237,
-      "reveal": 303,
-      "refund": 16,
+      "accept": 8370,
+      "receipt": 379,
+      "lock": 375,
+      "offer": 1530,
+      "reveal": 390,
+      "refund": 20,
       "cancel": 4,
       "solution": 1,
-      "heartbeat": 1
+      "heartbeat": 2
     },
-    "offres": 1237,
-    "offres_avec_au_moins_un_accept": 1220,
-    "part_des_offres_acceptees": 98.6,
-    "accepts_sur_ces_offres": 6479,
+    "offres": 1530,
+    "offres_avec_au_moins_un_accept": 1519,
+    "part_des_offres_acceptees": 99.3,
+    "accepts_sur_ces_offres": 8138,
     "accepts_dont_l_offre_est_hors_fenetre": 224,
-    "candidats_par_offre_moyen": 5.31,
-    "candidats_par_offre_max": 59,
-    "contrats_vus": 2065,
-    "verrouilles": 301,
+    "candidats_par_offre_moyen": 5.36,
+    "candidats_par_offre_max": 67,
+    "contrats_vus": 2569,
+    "verrouilles": 375,
     "part_des_accepts_qui_aboutissent_a_un_verrou": 4.5,
-    "reveles": 303,
-    "quittances": 297,
-    "contrats_verrouilles_puis_reveles": 238,
-    "contrats_verrouilles_puis_quittances": 221,
-    "part_verrouille_puis_quittance": 73.4,
+    "reveles": 389,
+    "quittances": 378,
+    "contrats_verrouilles_puis_reveles": 302,
+    "contrats_verrouilles_puis_quittances": 277,
+    "part_verrouille_puis_quittance": 73.9,
     "note_livraison": "La livraison ne passe pas par une trame tclk1 : elle est écrite en clair dans le salon du deal, qui n'est pas public. Elle n'est donc pas mesurable depuis le tableau, et son absence ici ne veut pas dire qu'elle n'a pas lieu.",
     "montant_flop": {
       "min": 1,
       "median": 200,
       "max": 1000,
-      "compte": 1122
+      "compte": 1385
     }
   }
 }
