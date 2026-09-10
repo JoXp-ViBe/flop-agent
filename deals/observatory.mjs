@@ -12,7 +12,7 @@
 //
 // Aucun secret n'entre ici : la lecture du tableau est publique et anonyme, aucune clé n'est chargée.
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,7 @@ const SALON = process.env.OBSERVATORY_ROOM ?? "tclk-offers";
 // La page est servie par GitHub Pages depuis `docs/` : le nom du dossier est une convention
 // de la plateforme, pas un choix editorial. L URL publique, elle, ne le montre pas.
 const SORTIE = process.env.OBSERVATORY_OUT ?? join(RACINE, "docs", "data.json");
+const HISTOIRE = process.env.OBSERVATORY_HISTORY ?? join(RACINE, "docs", "history.json");
 
 // ----- lecture ---------------------------------------------------------------------------------
 
@@ -93,6 +94,9 @@ export function survitAuNombre(nonce) {
 export function agreger(exact, valides) {
   const parType = {};
   const auteurs = new Set();
+  // Par auteur : combien de ses trames signees un lecteur naif perd. On ne garde que des
+  // COMPTES ; aucun DID de tiers ne sort de cette fonction, et la page n en publie aucun.
+  const parAuteur = new Map();
   const parLongueur = {};
   const offres = new Map();     // id -> {amount, asset, from}
   const accepts = new Map();    // ref d'offre -> Set(auteurs)
@@ -110,6 +114,12 @@ export function agreger(exact, valides) {
       parLongueur[cle].total += 1;
       if (valides[i]) parLongueur[cle].valides += 1;
       if (survitAuNombre(r.nonce)) { lisiblesNaif += 1; parLongueur[cle].lisiblesNaif += 1; }
+      if (r.from) {
+        const a = parAuteur.get(r.from) ?? { signees: 0, perdues: 0 };
+        a.signees += 1;
+        if (!survitAuNombre(r.nonce)) a.perdues += 1;
+        parAuteur.set(r.from, a);
+      }
     }
     const f = typeTrame(r.text);
     if (!f) continue;
@@ -151,6 +161,17 @@ export function agreger(exact, valides) {
   const total = candidats.reduce((a, b) => a + b, 0);
   const acceptsHorsFenetre = [...accepts.entries()].filter(([ref]) => !offres.has(ref)).reduce((n, [, s]) => n + s.size, 0);
 
+  // Trois etats par auteur : entierement lisible, partiellement perdu, entierement muet.
+  // « Muet » veut dire qu un lecteur naif ne recoit AUCUNE de ses trames signees : cet agent
+  // n existe pas pour lui, et c est vrai dans les deux sens si l autre a le meme defaut.
+  let auteursSignants = 0, auteursMuets = 0, auteursPartiels = 0;
+  for (const a of parAuteur.values()) {
+    if (!a.signees) continue;
+    auteursSignants += 1;
+    if (a.perdues === a.signees) auteursMuets += 1;
+    else if (a.perdues > 0) auteursPartiels += 1;
+  }
+
   // les montants annoncés
   const montants = [];
   for (const o of offres.values()) {
@@ -162,6 +183,9 @@ export function agreger(exact, valides) {
   return {
     lignes: exact.length,
     auteurs: auteurs.size,
+    auteursSignants,
+    auteursMuets,
+    auteursPartiels,
     signees,
     valides: valides.filter(Boolean).length,
     lisiblesNaif,
@@ -189,6 +213,37 @@ export function agreger(exact, valides) {
 export function part(numerateur, denominateur) {
   if (!denominateur) return null;
   return Number(((100 * numerateur) / denominateur).toFixed(1));
+}
+
+// ----- l'historique -------------------------------------------------------------------------------
+
+/** Les quelques chiffres qu'il vaut la peine de suivre dans le temps. */
+export function pointDHistoire(donnees) {
+  const s = donnees.signatures;
+  const c = donnees.commerce;
+  return {
+    t: donnees.mesure_le,
+    signees: s.trames_signees,
+    perdues: s.invisibles_a_un_lecteur_naif,
+    part_perdue: s.part_lisible_naivement === null ? null : Number((100 - s.part_lisible_naivement).toFixed(1)),
+    auteurs_muets: s.auteurs_entierement_muets_pour_un_lecteur_naif,
+    auteurs_signants: s.auteurs_qui_signent,
+    offres: c.offres,
+    candidats_moyen: c.candidats_par_offre_moyen,
+    accepts_vers_verrou: c.part_des_accepts_qui_aboutissent_a_un_verrou,
+  };
+}
+
+/**
+ * La serie mise a jour. Deux regles : on n'ecrase jamais le passe, et deux mesures du meme
+ * instant ne comptent qu'une fois (un workflow relance a la main ne doit pas doubler un point).
+ * La serie est bornee : au-dela, les plus anciens points sortent, jamais les plus recents.
+ */
+export function serieMiseAJour(ancienne, point, max = 800) {
+  const serie = Array.isArray(ancienne) ? ancienne.filter((p) => p && p.t !== point.t) : [];
+  serie.push(point);
+  serie.sort((a, b) => String(a.t).localeCompare(String(b.t)));
+  return serie.slice(-max);
 }
 
 // ----- self-test ------------------------------------------------------------------------------------
@@ -249,6 +304,31 @@ export function selftest() {
   ok("agrégat : le calcul naïf, lui, aurait donné 200 %", part(enchaine.quittances, enchaine.verrouilles) === 200);
   ok("agrégat : le montant relevé", a.montant && a.montant.min === 400 && a.montant.compte === 1);
   ok("agrégat : la longueur 19 isolée", a.parLongueur["19"].total === 1 && a.parLongueur["19"].lisiblesNaif === 0);
+  // trois auteurs : A n émet que du 19 chiffres altéré (muet), B du 13 (lisible), C signe les deux
+  const parA = agreger([
+    { from: "did:A", sig: "s", nonce: "1788976440077681234", text: "x" },
+    { from: "did:A", sig: "s", nonce: "1788976440077681235", text: "y" },
+    { from: "did:B", sig: "s", nonce: "1788950516570", text: "z" },
+    { from: "did:C", sig: "s", nonce: "1788976440077681236", text: "u" },
+    { from: "did:C", sig: "s", nonce: "1788950516571", text: "v" },
+  ], [true, true, true, true, true]);
+  ok("auteurs : trois signataires comptés", parA.auteursSignants === 3);
+  ok("auteurs : A est entièrement muet, B ne l'est pas", parA.auteursMuets === 1);
+  ok("auteurs : C est partiellement perdu", parA.auteursPartiels === 1);
+  ok("auteurs : la part des muets est bornée", part(parA.auteursMuets, parA.auteursSignants) === 33.3);
+  ok("auteurs : aucun DID ne sort de l'agrégat", !JSON.stringify(parA).includes("did:A"));
+  // l'historique
+  const d1 = { mesure_le: "2026-09-10T01:00:00Z", signatures: { trames_signees: 10, invisibles_a_un_lecteur_naif: 4, part_lisible_naivement: 60, auteurs_entierement_muets_pour_un_lecteur_naif: 2, auteurs_qui_signent: 5 }, commerce: { offres: 3, candidats_par_offre_moyen: 2, part_des_accepts_qui_aboutissent_a_un_verrou: 5 } };
+  const p1 = pointDHistoire(d1);
+  ok("historique : le point retient la part perdue, calculée et non recopiée", p1.part_perdue === 40 && p1.perdues === 4);
+  ok("historique : une part illisible reste null, jamais zéro", pointDHistoire({ ...d1, signatures: { ...d1.signatures, part_lisible_naivement: null } }).part_perdue === null);
+  ok("historique : le premier point crée la série", serieMiseAJour(null, p1).length === 1);
+  ok("historique : un second instant s'ajoute", serieMiseAJour([p1], { ...p1, t: "2026-09-10T02:00:00Z" }).length === 2);
+  ok("historique : le même instant ne double pas", serieMiseAJour([p1], { ...p1, signees: 99 }).length === 1 && serieMiseAJour([p1], { ...p1, signees: 99 })[0].signees === 99);
+  ok("historique : la série est triée dans le temps", serieMiseAJour([{ ...p1, t: "2026-09-10T03:00:00Z" }], { ...p1, t: "2026-09-10T02:00:00Z" }).map((x) => x.t)[0] === "2026-09-10T02:00:00Z");
+  const longue = Array.from({ length: 12 }, (_, i) => ({ ...p1, t: `2026-09-1${i % 10}T0${i % 9}:00:00Z` }));
+  ok("historique : bornée en gardant les plus RÉCENTS", serieMiseAJour(longue, { ...p1, t: "2026-09-30T00:00:00Z" }, 3).length === 3 && serieMiseAJour(longue, { ...p1, t: "2026-09-30T00:00:00Z" }, 3).at(-1).t === "2026-09-30T00:00:00Z");
+  ok("historique : une entrée nulle dans l'ancienne série ne casse rien", serieMiseAJour([null, p1], { ...p1, t: "2026-09-11T00:00:00Z" }).length === 2);
 
   const b = agreger([], []);
   ok("agrégat : un anneau vide ne casse pas et n'invente rien", b.lignes === 0 && b.montant === null && b.candidatsMoyen === 0);
@@ -285,6 +365,10 @@ async function mesurer() {
       part_lisible_naivement: part(a.lisiblesNaif, a.signees),
       invisibles_a_un_lecteur_naif: a.signees - a.lisiblesNaif,
       par_longueur_de_nonce: a.parLongueur,
+      auteurs_qui_signent: a.auteursSignants,
+      auteurs_entierement_muets_pour_un_lecteur_naif: a.auteursMuets,
+      auteurs_partiellement_perdus: a.auteursPartiels,
+      part_des_auteurs_muets: part(a.auteursMuets, a.auteursSignants),
     },
     commerce: {
       par_type_de_trame: a.parType,
@@ -310,6 +394,20 @@ async function mesurer() {
 
   mkdirSync(dirname(SORTIE), { recursive: true });
   writeFileSync(SORTIE, JSON.stringify(donnees, null, 2) + "\n");
+
+  // l'historique : lu, complété, réécrit. Une lecture qui échoue ne doit pas faire perdre la mesure,
+  // mais elle ne doit pas non plus faire repartir la série de zéro en silence : on le dit.
+  let ancienne = [];
+  if (existsSync(HISTOIRE)) {
+    try {
+      ancienne = JSON.parse(readFileSync(HISTOIRE, "utf8"));
+    } catch (e) {
+      console.error(`historique illisible (${String(e.message ?? e)}) : la série repart de cette mesure`);
+    }
+  }
+  const serie = serieMiseAJour(ancienne, pointDHistoire(donnees));
+  writeFileSync(HISTOIRE, JSON.stringify(serie) + "\n");
+  console.log(`historique : ${serie.length} points, du ${serie[0]?.t?.slice(0, 16)} au ${serie[serie.length - 1]?.t?.slice(0, 16)}`);
   console.log(`observatoire : ${a.lignes} lignes, ${a.signees} signées, ${a.valides} valides, ${a.signees - a.lisiblesNaif} invisibles à un lecteur naïf`);
   console.log(`écrit dans ${SORTIE}`);
   return donnees;
