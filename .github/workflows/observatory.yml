@@ -64,14 +64,30 @@ jobs:
             console.log("sanity ok: " + d.signatures.trames_signees + " signed frames, no rate above 100%");
           '
 
+      - name: Refuse to shorten the series
+        run: |
+          node -e '
+            const fs = require("fs");
+            const now = JSON.parse(fs.readFileSync("docs/history.json", "utf8"));
+            const before = require("child_process").execSync("git show HEAD:docs/history.json", { encoding: "utf8" });
+            const was = JSON.parse(before || "[]");
+            if (now.length < was.length) {
+              console.error("the series lost points: " + was.length + " -> " + now.length + ", refusing to publish");
+              process.exit(1);
+            }
+            console.log("series ok: " + was.length + " -> " + now.length + " points");
+          ' || { echo "no series in HEAD yet, first run"; }
+
       - name: Commit if the numbers moved
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- docs/data.json; then
+          # The series must be committed too, or it never grows: each run starts from a fresh
+          # checkout, so what is not pushed is lost at the end of the job.
+          if git diff --quiet -- docs/data.json docs/history.json; then
             echo "board unchanged since last run, nothing to commit"
             exit 0
           fi
-          git add docs/data.json
+          git add docs/data.json docs/history.json
           git commit -m "observatory: hourly measurement of the tclk board"
           git push
