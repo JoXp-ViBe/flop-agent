@@ -49,6 +49,19 @@ def note_conforme(note: str | None, did: str, canoniques: list[str]) -> bool:
     return bool(jetons) and jetons[0] == did and all(c in jetons for c in canoniques)
 
 
+# La note vit à un chemin que N'IMPORTE QUI peut réécrire (manuel : « every other namespace is
+# world-writable »). La référence est la note que nous avons voulue, au caractère près, gardée dans le
+# dossier d'état ; publier() et le passage de présence la remettent en place si un tiers l'a changée.
+REFERENCE = "note_reference.txt"
+
+
+def decision_note(publiee: str | None, reference: str | None, did: str) -> str:
+    """« ok », « restaurer », ou « sans_reference » (aucune référence, ou une qui n'est pas la nôtre)."""
+    if not reference or reference.split()[0] != did:
+        return "sans_reference"
+    return "ok" if publiee == reference else "restaurer"
+
+
 class Identite:
     def __init__(self, tc: Technocore, dossier: str = "data", rails: str = "paper", salon_possede: str = ""):
         self.tc = tc
@@ -94,12 +107,69 @@ class Identite:
     def note_publiee(self) -> str | None:
         return self.tc.lire_note(self.tc.signeur.ns_note, self.tc.signeur.key_note)
 
+    @property
+    def chemin_reference(self) -> str:
+        return os.path.join(os.path.dirname(self.chemin) or ".", REFERENCE)
+
+    def lire_reference(self) -> str | None:
+        try:
+            with open(self.chemin_reference, encoding="utf-8") as f:
+                return f.read().strip() or None
+        except OSError:
+            return None
+
+    def ecrire_reference(self, valeur: str) -> None:
+        tmp = self.chemin_reference + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(valeur)
+        os.replace(tmp, self.chemin_reference)
+
+    def figer_reference(self) -> dict:
+        """La note publiée devient la référence : à faire après chaque modification voulue de la note."""
+        actuelle = self.note_publiee()
+        if not note_conforme(actuelle, self.did, self.jetons_canoniques()):
+            return {"figee": False, "raison": "note absente, pas la nôtre, ou sans nos jetons"}
+        self.ecrire_reference(actuelle)
+        return {"figee": True, "longueur": len(actuelle)}
+
+    def garder_note(self, max_jour: int = 12) -> dict:
+        """Compare la note publiée à la référence et la remet en place si un tiers l'a changée.
+        Plafond par jour : on ne se bat pas sans fin contre quelqu'un qui réécrit. Jamais le contenu
+        écrit par un tiers dans le résultat (il finit au journal, puis sur Discord) : des longueurs et des
+        drapeaux seulement."""
+        ref = self.lire_reference()
+        publiee = self.note_publiee()
+        decision = decision_note(publiee, ref, self.did)
+        if decision != "restaurer":
+            return {"note": decision}
+        jetons = (publiee or "").split()
+        info = {"note": "alteree", "longueur_avant": len(publiee or ""),
+                "did_ok": bool(jetons) and jetons[0] == self.did, "record_present": "flop-owner:" in jetons}
+        jour = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        compte = self.etat.get("restaurations") or {}
+        if compte.get("jour") != jour:
+            compte = {"jour": jour, "n": 0}
+        if compte["n"] >= max_jour:
+            return {**info, "restauree": False, "raison": "plafond du jour atteint (%d)" % max_jour}
+        s = self.tc.signeur
+        ecrite = self.tc.ecrire_note(s.ns_note, s.key_note, ref, if_absent=publiee is None, if_valeur=publiee)
+        compte["n"] += 1
+        self.etat["restaurations"] = compte
+        self._ecrire()
+        resultat = {**info, "restauree": bool(ecrite) and self.note_publiee() == ref}
+        if not ecrite:
+            resultat["raison"] = "la note a encore changé pendant l'écriture"
+        return resultat
+
     def publier(self) -> dict:
         """Tient nos jetons à jour dans la note DID sans rien effacer d'autre, ouvre la boîte, relit."""
         s = self.tc.signeur
         canoniques = self.jetons_canoniques()
         actuelle = self.note_publiee()
-        voulue = fusionner_note(actuelle, self.did, canoniques)
+        reference = self.lire_reference()
+        # la référence, quand elle est la nôtre, sert de base : une note réécrite par un tiers revient
+        base = reference if decision_note(actuelle, reference, self.did) != "sans_reference" else actuelle
+        voulue = fusionner_note(base, self.did, canoniques)
         if actuelle is not None and voulue == actuelle:
             resultat = {"note": "inchangée"}
         else:
@@ -111,6 +181,8 @@ class Identite:
             ecrite = self.tc.ecrire_note(s.ns_note, s.key_note, voulue,
                                          if_absent=actuelle is None, if_valeur=actuelle)
             resultat = {"note": "écrite" if ecrite else "changée entre lecture et écriture : rien d'écrit"}
+        if reference is not None and resultat["note"] in ("inchangée", "écrite") and reference != voulue:
+            self.ecrire_reference(voulue)
         relue = self.note_publiee()
         resultat["chemin"] = "/kv/%s/%s" % (s.ns_note, s.key_note)
         resultat["conforme"] = note_conforme(relue, self.did, canoniques)

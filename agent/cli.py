@@ -10,6 +10,7 @@
   python -m agent delegate DID SCOPE DAYS   delegation line to paste into the note
   python -m agent selftest            official signer vectors, no network, no seed
   python -m agent brief               publish today's on-chain readings (data/brief/latest.json) in BRIEF_ROOM
+  python -m agent note-snapshot       the published note becomes the reference the presence loop restores
 
 Variables: FLOP_SEED (64 hex, from a password manager), TECHNOCORE_URL, FLOP_ROOM (d-...),
 FLOP_RAILS (paper), FLOP_DATA (state directory, default ./data), FLOP_PERIODE.
@@ -96,6 +97,10 @@ def cmd_presence(une_fois: bool = True) -> int:
                         did=m.get("did"), texte=(m.get("text") or "")[:500])
             ok = ident.presence("mailbox:%d" % len(msgs))
             journal(dossier, "presence", ok=ok, nouveaux=len(msgs))
+            # la note d'identité est réécrivable par n'importe qui : chaque passage la compare à la référence
+            garde = ident.garder_note()
+            if garde.get("note") == "alteree":
+                journal(dossier, "note_alteree", **garde)
             print("%s présence %s, %d message(s) neuf(s)" % (
                 datetime.now(timezone.utc).strftime("%H:%M"), "écrite" if ok else "REFUSÉE", len(msgs)))
         except (ErreurVenue, ErreurSigneur) as e:
@@ -124,6 +129,15 @@ def cmd_delegate(args: list[str]) -> int:
     print("# à ajouter (séparé par un espace) à /kv/%s/%s" % (tc.signeur.ns_note, tc.signeur.key_note))
     print(tc.signeur.deleguer(args[0], args[1], int(args[2])))
     return 0
+
+
+def cmd_note_snapshot() -> int:
+    """Après une modification voulue de la note : elle devient la référence que la présence garde."""
+    dossier, tc, ident = contexte()
+    r = ident.figer_reference()
+    journal(dossier, "note_reference", **r)
+    print(json.dumps(r, ensure_ascii=False))
+    return 0 if r.get("figee") else 1
 
 
 def cmd_brief() -> int:
@@ -167,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_selftest()
         if cmd == "brief":
             return cmd_brief()
+        if cmd == "note-snapshot":
+            return cmd_note_snapshot()
     except ErreurVenue as e:
         print("la venue a refusé : %s" % e, file=sys.stderr)
         return 3

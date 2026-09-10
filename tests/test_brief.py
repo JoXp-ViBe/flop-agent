@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 
 import pytest
 
 from agent import brief
+from agent.technocore import ErreurVenue
 
 R = {"room": "d-onchain-brief", "ns": "onchain-brief", "source": "public on-chain analytics, free tier", "url": ""}
 
@@ -64,3 +66,72 @@ def test_json_trop_long_leve():
     r["source"] = "y" * 8000
     with pytest.raises(ValueError):
         brief.json_compact(r)
+
+
+# ----- publier, contre une venue en mémoire -------------------------------------------------------
+
+class FauxTC:
+    """La venue réduite au salon du relevé et à ses notes. refuse_salon : toute CRÉATION de salon est
+    refusée comme le 11/09 (400 « room limit reached »), les écritures dans un salon existant passent."""
+
+    def __init__(self, refuse_salon=False):
+        self.signeur = type("S", (), {"did": "did:key:z6MkTest"})()
+        self.refuse_salon = refuse_salon
+        self.messages = []
+        self.notes = {}
+
+    def lire_salon(self, room, since=None, limit=50, wait=None):
+        return {"room": room, "messages": list(self.messages), "last_seq": len(self.messages)}
+
+    def lire_note(self, ns, key):
+        return self.notes.get((ns, key))
+
+    def revendiquer_salon(self, room):
+        return True
+
+    def dire_signe(self, room, texte):
+        if self.refuse_salon and not self.messages:
+            raise ErreurVenue("dire (signé) dans " + room, 400, "400 room limit reached (163840 is the cap)")
+        self.messages.append({"from": self.signeur.did, "text": texte, "ts": "2026-09-11T05:35:00Z"})
+        return {}
+
+    def ecrire_note(self, ns, key, valeur, if_absent=False, if_valeur=None):
+        self.notes[(ns, key)] = valeur
+        return True
+
+
+def _poser(dossier, monkeypatch):
+    os.makedirs(os.path.join(dossier, "brief"))
+    with open(os.path.join(dossier, "brief", "latest.json"), "w", encoding="utf-8") as f:
+        json.dump(releve(), f)
+    monkeypatch.setenv("BRIEF_ROOM", "d-x")
+    monkeypatch.setenv("BRIEF_NS", "x")
+
+
+def test_salon_refuse_les_notes_partent_quand_meme(tmp_path, monkeypatch):
+    _poser(str(tmp_path), monkeypatch)
+    tc = FauxTC(refuse_salon=True)
+    r = brief.publier(tc, str(tmp_path))
+    assert "room limit reached" in r.get("salon_refuse", "") and not tc.messages
+    assert json.loads(tc.notes[("x", "latest")])["reading_date"] == "2026-09-08"
+    assert ("x", "2026-09-08") in tc.notes
+
+
+def test_une_presentation_une_seule_fois_puis_deja_publie(tmp_path, monkeypatch):
+    _poser(str(tmp_path), monkeypatch)
+    tc = FauxTC()
+    r = brief.publier(tc, str(tmp_path))
+    assert r.get("intro") is True and "salon_refuse" not in r and len(tc.messages) == 3
+    r2 = brief.publier(tc, str(tmp_path))
+    assert r2.get("statut") == "déjà publié" and len(tc.messages) == 3
+
+
+def test_salon_ouvert_plus_tard_recoit_sa_presentation(tmp_path, monkeypatch):
+    # le cas du 11/09 : la revendication passe, la création est refusée ; au passage suivant le salon
+    # est encore vide et la présentation doit partir en premier
+    _poser(str(tmp_path), monkeypatch)
+    tc = FauxTC(refuse_salon=True)
+    brief.publier(tc, str(tmp_path))
+    tc.refuse_salon = False
+    r = brief.publier(tc, str(tmp_path))
+    assert r.get("intro") is True and tc.messages[0]["text"].startswith("Daily BTC on-chain readings")

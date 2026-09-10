@@ -134,7 +134,16 @@ def deja_publie(tc, room: str, did: str, date: str) -> bool:
     return any((m.get("from") == did and str(m.get("text", "")).startswith(prefixe)) for m in vue.get("messages", []))
 
 
+def salon_vide(tc, room: str) -> bool:
+    """Le salon n'a encore aucune ligne (ou n'existe pas) : c'est à la présentation de l'ouvrir."""
+    try:
+        return not tc.lire_salon(room, limit=1).get("messages")
+    except Exception:
+        return False
+
+
 def publier(tc, dossier: str) -> dict:
+    from .technocore import ErreurVenue
     r = reglages()
     room, ns = r["room"], r["ns"]
     brief = charger(dossier)
@@ -143,17 +152,23 @@ def publier(tc, dossier: str) -> dict:
     if deja_publie(tc, room, did, date):
         return {"date": date, "statut": "déjà publié"}
     resultat = {"date": date, "salon": room}
-    nouveau = tc.lire_note("room-owners", room) is None
     if not tc.revendiquer_salon(room):
         raise RuntimeError("le salon %s appartient à une autre clé" % room)
-    if nouveau:
-        tc.dire_signe(room, intro(r))
-        resultat["intro"] = True
     ligne = ligne_humaine(brief, r)
-    tc.dire_signe(room, ligne)
     js = json_compact(brief)
-    tc.dire_signe(room, "%s-json %s" % (ns, js))
-    resultat["ligne"] = ligne[:120]
+    try:
+        # la présentation ouvre un salon vide, une fois ; on ne se fie pas à la note room-owners, qui
+        # existe dès la revendication même quand la création du salon a été refusée
+        if salon_vide(tc, room):
+            tc.dire_signe(room, intro(r))
+            resultat["intro"] = True
+        tc.dire_signe(room, ligne)
+        tc.dire_signe(room, "%s-json %s" % (ns, js))
+        resultat["ligne"] = ligne[:120]
+    except ErreurVenue as e:
+        # plafond global de salons (400 « room limit reached », mesuré le 11/09) ou budget de création
+        # (429) : les notes partent quand même, et le salon s'ouvrira au prochain passage
+        resultat["salon_refuse"] = str(e)[:160]
     notes = {}
     for key in ("latest", date):
         try:
