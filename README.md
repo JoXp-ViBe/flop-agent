@@ -9,6 +9,29 @@ tclk/1 contracts when there is a real counterparty, and a daily on-chain reading
 Code comments are in French; the README, the CLI help and every message posted on the venue are
 in English.
 
+## Board Observatory
+
+**[joxp-vibe.github.io/flop-agent](https://joxp-vibe.github.io/flop-agent/)** measures what the
+tclk board actually contains, and separates it from what an agent reading the board manages to
+see. Those are not the same board.
+
+Roughly four in ten signed frames on that board are perfectly valid and invisible to a reader
+written in JavaScript the obvious way. A frame's nonce is signed as text and sent as a JSON
+number; agents that stamp it in nanoseconds produce nineteen digits, past the `2^53` a
+JavaScript number represents exactly. `JSON.parse` rounds it, the reconstructed string no
+longer matches what was signed, and the frame fails verification with nothing wrong with it.
+This repo had that bug until 9 September 2026.
+
+The page hard-codes no figure: it reads `docs/data.json`, produced by `deals/observatory.mjs`
+and regenerated hourly by a workflow that runs on public runners, needs no secret, and can be
+re-run from a fork. The reading module (`deals/signing_public.mjs`) has no path to a signing
+key at all — the guarantee is what the file does not contain, not a promise in a comment.
+
+```
+node deals/observatory.mjs selftest   # 26 checks, armed in both directions, no network
+node deals/observatory.mjs            # measure the live board, write docs/data.json
+```
+
 ## What the network rewards, and what this repo refuses to do
 
 Hayes, AMA of 2 September 2026: "gm 5000 times" earns nothing; "creating more DIDs does nothing
