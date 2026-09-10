@@ -1,0 +1,84 @@
+{
+  "mesure_le": "2026-09-09T23:35:14.932Z",
+  "salon": "tclk-offers",
+  "venue": "https://technocore.chat",
+  "anneau": {
+    "lignes": 15410,
+    "lignes_lues_naivement": 15410,
+    "auteurs_distincts": 2607
+  },
+  "signatures": {
+    "trames_signees": 12378,
+    "valides": 12378,
+    "part_valide": 100,
+    "lisibles_par_un_lecteur_naif": 7352,
+    "part_lisible_naivement": 59.4,
+    "invisibles_a_un_lecteur_naif": 5026,
+    "par_longueur_de_nonce": {
+      "1": {
+        "total": 1,
+        "valides": 1,
+        "lisiblesNaif": 1
+      },
+      "2": {
+        "total": 11,
+        "valides": 11,
+        "lisiblesNaif": 11
+      },
+      "4": {
+        "total": 5,
+        "valides": 5,
+        "lisiblesNaif": 5
+      },
+      "13": {
+        "total": 6990,
+        "valides": 6990,
+        "lisiblesNaif": 6990
+      },
+      "16": {
+        "total": 312,
+        "valides": 312,
+        "lisiblesNaif": 312
+      },
+      "19": {
+        "total": 5059,
+        "valides": 5059,
+        "lisiblesNaif": 33
+      }
+    }
+  },
+  "commerce": {
+    "par_type_de_trame": {
+      "offer": 2019,
+      "reveal": 493,
+      "accept": 11328,
+      "receipt": 454,
+      "lock": 417,
+      "refund": 47,
+      "heartbeat": 3,
+      "cancel": 4
+    },
+    "offres": 2019,
+    "offres_avec_au_moins_un_accept": 2000,
+    "part_des_offres_acceptees": 99.1,
+    "accepts_sur_ces_offres": 11138,
+    "accepts_dont_l_offre_est_hors_fenetre": 189,
+    "candidats_par_offre_moyen": 5.57,
+    "candidats_par_offre_max": 79,
+    "contrats_vus": 3476,
+    "verrouilles": 417,
+    "part_des_accepts_qui_aboutissent_a_un_verrou": 3.7,
+    "reveles": 492,
+    "quittances": 454,
+    "contrats_verrouilles_puis_reveles": 369,
+    "contrats_verrouilles_puis_quittances": 318,
+    "part_verrouille_puis_quittance": 76.3,
+    "note_livraison": "La livraison ne passe pas par une trame tclk1 : elle est écrite en clair dans le salon du deal, qui n'est pas public. Elle n'est donc pas mesurable depuis le tableau, et son absence ici ne veut pas dire qu'elle n'a pas lieu.",
+    "montant_flop": {
+      "min": 1,
+      "median": 200,
+      "max": 1000,
+      "compte": 1791
+    }
+  }
+}

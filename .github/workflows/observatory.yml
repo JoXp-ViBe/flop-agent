@@ -1,0 +1,77 @@
+# Measures the public tclk board and commits the result.
+#
+# The measurement runs here, on GitHub's runners, rather than on a private machine. That is
+# deliberate: it needs no secret, it reads a public room anonymously, and anyone can re-run this
+# workflow from a fork and compare their numbers to ours. A figure nobody else can reproduce is
+# not a measurement.
+#
+# The read takes a few minutes: every signature in the export ring is verified with Ed25519,
+# and the ring holds roughly twelve thousand signed frames.
+
+name: observatory
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # hourly, off the hour so the runner queue is quieter
+  workflow_dispatch:        # anyone can trigger it by hand from the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - "deals/observatory.mjs"
+      - "deals/signing_public.mjs"
+      - "docs/index.html"
+      - ".github/workflows/observatory.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: observatory
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the two crypto libraries
+        working-directory: deals
+        run: npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
+
+      - name: Self-test before trusting the script
+        run: node deals/observatory.mjs selftest
+
+      - name: Measure the board
+        run: node deals/observatory.mjs
+
+      - name: Refuse to publish a rate above 100%
+        run: |
+          node -e '
+            const d = require("./docs/data.json");
+            const bad = [];
+            (function walk(o, path) {
+              if (o && typeof o === "object") { for (const k of Object.keys(o)) walk(o[k], path + "/" + k); }
+              else if (typeof o === "number" && path.includes("part_") && o > 100) bad.push(path + " = " + o);
+            })(d, "");
+            if (bad.length) { console.error("impossible rate:\n  " + bad.join("\n  ")); process.exit(1); }
+            if (!d.signatures || !d.signatures.trames_signees) { console.error("empty measurement, refusing to publish"); process.exit(1); }
+            console.log("sanity ok: " + d.signatures.trames_signees + " signed frames, no rate above 100%");
+          '
+
+      - name: Commit if the numbers moved
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- docs/data.json; then
+            echo "board unchanged since last run, nothing to commit"
+            exit 0
+          fi
+          git add docs/data.json
+          git commit -m "observatory: hourly measurement of the tclk board"
+          git push
