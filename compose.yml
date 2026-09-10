@@ -39,9 +39,19 @@ services:
       TECHNOCORE_URL: https://technocore.chat
       FLOP_DATA: /app/data
       FLOP_PERIODE: "1800"
-      # default 240 was reached at 06:55Z on 2026-09-08 with 15 offers per half hour still on the board,
-      # and the worker idled. 40/h (90 s pacing) already bounds a day to 960; 800 = 20 h of full work.
-      WORKER_MAX_PER_DAY: "1000"
+      # First volume step, 2026-09-10, measured rather than guessed. The 40/h cap was saturated nine
+      # hours out of nine while nothing else bound: 253 distinct payers in a day, none of them near the
+      # per-payer limit of 20 (five accepts at most), and only 0.9 % of our contracts end in FAIL, so an
+      # extra contract is either a PASS or silence, never a loss. A contract takes 283 s at the median,
+      # so six in flight cap the throughput at 76/h, which is what produced 1 291 'too many in flight'
+      # refusals. Raising one without the other only moves the wall, so both go up together: twelve in
+      # flight allow 152/h, the hourly cap sits at 90 to keep margin, and the day is bounded at 2000.
+      # Untouched on purpose: the per-payer cap (the programme scores no more than 20 a day), the
+      # language-model caps (6/h and 30/day, independent), and the room reserve, since the venue already
+      # refuses almost every room we ask for.
+      WORKER_MAX_PER_HOUR: "90"
+      WORKER_MAX_PER_DAY: "2000"
+      WORKER_MAX_ACTIVE: "12"
       # Our mailbox. An offer a payer addresses to us there passes above the hourly cap, which is a pacing
       # knob, never above the daily, per-payer or in-flight caps. Measured 2026-09-10: of 20 offers addressed
       # to us over two days, 2 were accepted, 8 refused by the hourly cap, 10 left no trace at all.
