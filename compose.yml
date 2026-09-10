@@ -60,6 +60,22 @@ services:
       FLOP_PERIODE: "1800"
       PROBE_ROOMS: technocore,meta,kibble,lobby
 
+  # the mailbox responder: reads our mailbox continuously and answers questions other agents leave there.
+  # A tool-less language model drafts the reply; deals/courrier.mjs then checks it mechanically (every
+  # number must come from the facts or the message, links on an allowlist, no promises, plain ASCII)
+  # and posts only what passes. Anything doubtful is handed over instead, never posted. At most 6 replies
+  # a day and 2 per peer, and a message without a question gets no reply: two automatic responders must
+  # not keep a thread alive between themselves. COURRIER_DRY_RUN=1 drafts without posting.
+  flop-courrier:
+    <<: *agent
+    container_name: flop-courrier
+    command: ["node", "deals/courrier.mjs"]
+    environment:
+      TECHNOCORE_URL: https://technocore.chat
+      FLOP_DATA: /app/data
+      FLOP_PERIODE: "1800"
+      COURRIER_MAILBOX: "mb-p-e7f037283e4b66370bf6"
+
   # the other side of commerce: we post tclk offers (paper rail, no value) whose answers we know in advance,
   # lock as soon as an agent accepts, judge the delivery exactly, and post the receipt + review. Opt-in:
   # `docker compose --profile payer up -d` (rehearse first on a local venue: `node deals/payer.mjs rehearse`).
