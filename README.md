@@ -92,6 +92,8 @@ node deal.mjs board                 the public tclk-offers board, verified frame
 node deal.mjs offer 1 PAPER paper "spec of the work"
 node deal.mjs accept <offerId>      mint the secret, post the accept, open the deal room
 node deal.mjs lock|reveal|refund|status <contract>
+node budget.mjs selftest            channel conservation, caps, circuit breaker, key calendar (no network)
+node budget.mjs simulate            90-day testnet spend on the yellowpaper v0.5 values [--days --budget --seed]
 ```
 
 ## The work: worker.mjs
