@@ -45,10 +45,10 @@ export const REGLAGES = {
   // cadence : le plafond horaire se lisse sur l'heure au lieu d'être consommé en trois minutes
   // (mesuré le 08/09 : 40 accepts entre 00:30 et 00:33, puis rien jusqu'à 01:00)
   ecartMs: entier("WORKER_MIN_GAP_S", 0) * 1000,
-  // le budget de création de salons de la venue est par IP et par heure glissante (mesuré le 08/09 : 328 salons
-  // ouverts dans la journée, refus « room-creation budget spent » avec retry-after ≈ 27 min) ; le payeur, même IP,
-  // a besoin d'un salon par offre : le worker en laisse quelques-uns
-  maxSalonsHeure: entier("WORKER_ROOMS_PER_HOUR", 17),
+  // la venue accorde 20 créations de salon par jour et par IP, une toutes les 72 minutes (seau à jetons,
+  // limits.new_rooms_per_day_per_ip de /.well-known/agent.json, mesuré le 10/09). Le worker n'en crée que pour
+  // une attestation (heartbeatUtile) ; le reste va au payeur, même IP, qui en a besoin pour ses verrous.
+  maxSalonsHeure: entier("WORKER_ROOMS_PER_HOUR", 3),
   // au-dessus de ce montant, un refus est dit : on veut savoir pourquoi une offre qui vaut la peine nous echappe
   montantATracer: entier("WORKER_TRACE_AMOUNT", 400),
   // notre boite (mb-p-...). Une offre qu'un payeur nous y adresse passe au-dessus du plafond horaire, qui
@@ -79,6 +79,12 @@ export function noterRefusSalon(detail, now = Date.now()) {
 export function peutOuvrirSalon(etat, now = Date.now(), max = REGLAGES.maxSalonsHeure) {
   etat.salonsOuverts = (etat.salonsOuverts ?? []).filter((t) => now - t < 3600_000);
   return etat.salonsOuverts.length < max;
+}
+/** Le heartbeat vaut-il une création de salon ? Pour une attestation seulement, hors blocage, dans notre part. */
+export function heartbeatUtile(deal, etat, now = Date.now()) {
+  if (deal?.genre !== "attest") return false;
+  if (now < salonsBloquesJusqua) return false;
+  return peutOuvrirSalon(etat, now);
 }
 
 export function suspendue(famille) {
@@ -325,13 +331,15 @@ async function menerDeal(deal, signer, etat) {
     actifs.delete(contract);
   };
   try {
-    // 1. le salon du deal existe dès notre heartbeat (ou dès le verrou du payeur si notre IP a épuisé ses salons du jour)
-    // jamais de réessai ici : quota de salons épuisé = 429 immédiat, et c'est le payeur qui ouvre le salon
-    if (!peutOuvrirSalon(etat)) journal("heartbeat_reserve", { contract, ouverts: etat.salonsOuverts.length });
-    else {
+    // 1. le heartbeat, seulement quand il vaut une création de salon : une attestation, dont la ligne
+    // tclk-attest doit être dans le salon AVANT le verrou (étape 2). Pour tout le reste, le payeur ouvre le
+    // salon après son verrou ; écrire avant lui coûte une création. Mesuré le 11/09 sur 3 429 deals en 3 jours :
+    // 2 963 heartbeats refusés (429 room-creation), le verrou vient quand même (93,8 % sans heartbeat réussi,
+    // 96,7 % avec), et notre budget de 20 créations par jour et par IP manquait au payeur (33 refus en 2 jours).
+    if (heartbeatUtile(deal, etat)) {
       try { await postText(signer, room, heartbeatLine(signer.did, contract), { retries: 0 }); etat.salonsOuverts.push(Date.now()); journal("heartbeat", { contract }); }
       catch (e) { const msg = String(e.message ?? e); journal("heartbeat_refuse", { contract, detail: msg.slice(0, 160) }); noterRefusSalon(msg); }
-    }
+    } else etat.stats.heartbeats_omis = (etat.stats.heartbeats_omis ?? 0) + 1;
 
     // 2. la réponse, calculée maintenant : si elle échoue, on se retire proprement (cancel avant tout verrou)
     let reponse = deal.reponse ?? null;
@@ -603,6 +611,13 @@ function selftest() {
   const es = { salonsOuverts: Array.from({ length: 17 }, (_, i) => now - i * 60_000) };
   ok("réserve de salons : 17 ouverts dans l'heure → non ; les plus vieux qu'une heure sortent → oui", !peutOuvrirSalon(es, now, 17) && peutOuvrirSalon({ salonsOuverts: Array.from({ length: 17 }, (_, i) => now - 3600_001 - i) }, now, 17) && peutOuvrirSalon(es, now, 18));
   ok("attest refusée tant que les salons sont bloqués", planifier(parseSpec("attest | [difficulty 1/3] Post a signed line in the deal room then report its seq | reward tier 1/5 | done looks like: attested seq <seq>"), { did: "did:key:z6MkMoi" }) === null);
+  // heartbeat : une création de salon pour une attestation seulement, jamais pendant un blocage, dans notre part
+  const libre = { salonsOuverts: [] };
+  const apres = salonsBloquesJusqua + 1;
+  ok("heartbeat : jamais pour un deal ordinaire", !heartbeatUtile({ genre: "math" }, libre, apres) && !heartbeatUtile({ genre: "docs" }, libre, apres));
+  ok("heartbeat : oui pour une attestation hors blocage", heartbeatUtile({ genre: "attest" }, libre, apres));
+  ok("heartbeat : non pendant un blocage", !heartbeatUtile({ genre: "attest" }, libre, salonsBloquesJusqua - 1));
+  ok("heartbeat : non quand notre part de l'heure est prise", !heartbeatUtile({ genre: "attest" }, { salonsOuverts: Array.from({ length: REGLAGES.maxSalonsHeure }, (_, i) => apres - i) }, apres));
   // le nonce est partage par nos trois conteneurs : un frere qui poste entre-temps fait refuser 400
   const refusNonce = { status: 400, body: "400 nonce 1788950516570 is not greater than 1788950517407, the last one this key used" };
   ok("nonce double : le vrai refus est reconnu", nonceDepasse(refusNonce));

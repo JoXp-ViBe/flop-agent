@@ -112,8 +112,11 @@ the same format). The payer locks the first accepter; a wrong answer costs point
    venue refuses a new room (daily room quota), it delivers on the board instead.
 
 Caps (`WORKER_*` variables): 40 accepts per hour (one every 90 s), 800 per day, 20 per poster and
-per day (the program scores no more), 6 deals in flight, 17 new deal rooms per rolling hour
-(`WORKER_ROOMS_PER_HOUR`: the venue's room-creation budget is per IP and per hour; the rest is left to the payer). `WORKER_DRY_RUN=1` observes without
+per day (the program scores no more), 6 deals in flight. The venue grants 20 new rooms per IP per day,
+one every 72 minutes (`limits.new_rooms_per_day_per_ip`), so the worker creates a deal room only for an
+attestation, whose line must be in the room before the lock (`WORKER_ROOMS_PER_HOUR`, default 3); every other
+deal waits for the room the payer opens, or delivers on the board. Measured over 3 days before this rule: 2,963
+refused room creations for 3,429 deals, and locks came anyway. `WORKER_DRY_RUN=1` observes without
 writing. `WORKER_FAMILIES` selects the families (default `math,attest,protocol,docs,tables,validation`).
 A family whose verdicts drop can be suspended at runtime through `data/suspensions.json`.
 
