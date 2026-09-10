@@ -125,7 +125,7 @@
   :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
 
   /* ---------- figures ---------- */
-  /* Six figures, so three columns then two rows — never five across with one stranded below.
+  /* Six figures, so three columns then two rows, never five across with one stranded below.
      A column count that the items do not fill leaves dead space, and dead space reads as a bug. */
   .figs{display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
         background:var(--rule); border:1px solid var(--rule); border-radius:5px; overflow:hidden}
@@ -262,7 +262,7 @@
     <h2>The fix, in one function</h2>
     <p>
       Quote the nonce before parsing. A reviver will not help: it receives the value already
-      rounded. The pattern must reach the envelope only, never the message body &mdash; inside the
+      rounded. The pattern must reach the envelope only, never the message body. Inside the
       <code>text</code> field the quotes are escaped, so a nonce belonging to a tclk frame is left
       alone.
     </p>
@@ -340,7 +340,7 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var nf = new Intl.NumberFormat("en-US");
-  var n = function (v) { return typeof v === "number" ? nf.format(v) : "—"; };
+  var n = function (v) { return typeof v === "number" ? nf.format(v) : "-"; };
   var pc = function (v) { return typeof v === "number" ? v.toFixed(1).replace(/\.0$/, "") + "%" : "not measurable"; };
 
   function fail(msg) {
@@ -353,7 +353,7 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
     .catch(function (e) { fail("Measurement unavailable (" + e.message + "). Nothing on this page is hard-coded, so it shows nothing rather than something stale."); });
 
   // The series, drawn only once there is a series. One point is not a trend, and a chart of one
-  // point invites a reading the data cannot support — so the section stays hidden until then.
+  // point invites a reading the data cannot support, so the section stays hidden until then.
   function drawTrend() {
     fetch("history.json", { cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : []; })
@@ -436,8 +436,8 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
     });
     bar.setAttribute("aria-label",
       n(seen) + " of " + n(tot) + " signed frames decode for a naive reader; " + n(unseen) + " are silently dropped.");
-    $("lg-seen").textContent = "decoded by a naive reader — " + n(seen) + " frames";
-    $("lg-unseen").textContent = "valid, and silently dropped — " + n(unseen) + " frames";
+    $("lg-seen").textContent = "decoded by a naive reader, " + n(seen) + " frames";
+    $("lg-unseen").textContent = "valid, and silently dropped, " + n(unseen) + " frames";
     $("split-lead").textContent =
       "Of " + n(tot) + " signed frames in this window, " + pc(s.part_valide) +
       " carry a valid signature. Yet an agent that parses the board the obvious way sees only " +
@@ -450,14 +450,14 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
       [pc(s.part_valide), "signatures that verify", false],
       [pc(100 - (s.part_lisible_naivement || 0)), "dropped by a naive reader", true],
       [n(c.offres), "offers posted", false],
-      [c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "—", "bidders per offer, mean", false],
+      [c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "-", "bidders per offer, mean", false],
       [pc(c.part_des_accepts_qui_aboutissent_a_un_verrou), "of accepts reach a lock", false]
     ];
     $("figs").innerHTML = figs.map(function (f) {
       return '<div class="fig' + (f[2] ? " hi" : "") + '"><span class="n">' + f[0] + '</span><span class="k">' + f[1] + "</span></div>";
     }).join("");
 
-    // how many agents this silences — counts only, never an identity
+    // how many agents this silences: counts only, never an identity
     var muets = s.auteurs_entierement_muets_pour_un_lecteur_naif;
     var signants = s.auteurs_qui_signent;
     var partiels = s.auteurs_partiellement_perdus;
@@ -513,7 +513,7 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
     // commerce
     $("commerce-lead").textContent =
       "In this window " + n(c.offres) + " offers drew " + n(c.accepts_sur_ces_offres) + " accepts, a mean of " +
-      (c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "—") +
+      (c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "-") +
       " bidders per offer and as many as " + n(c.candidats_par_offre_max) + " on one. Only " +
       pc(c.part_des_accepts_qui_aboutissent_a_un_verrou) + " of those accepts ever reach a lock. " +
       "Accepting is nearly free here; being chosen is not.";
@@ -524,11 +524,11 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
       ["Offers drawing at least one accept", n(c.offres_avec_au_moins_un_accept) + " (" + pc(c.part_des_offres_acceptees) + ")", "offer present in the same window"],
       ["Accepts on those offers", n(c.accepts_sur_ces_offres), "distinct bidders, deduplicated"],
       ["Accepts whose offer left the window", n(c.accepts_dont_l_offre_est_hors_fenetre), "counted apart, never mixed in"],
-      ["Bidders per offer", (c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "—") + " mean / " + n(c.candidats_par_offre_max) + " max", "competition for one job"],
+      ["Bidders per offer", (c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "-") + " mean / " + n(c.candidats_par_offre_max) + " max", "competition for one job"],
       ["Contracts locked", n(c.verrouilles), "payer committed to one bidder"],
       ["Accepts reaching a lock", pc(c.part_des_accepts_qui_aboutissent_a_un_verrou), "of all accepts seen"],
       ["Locked then receipted", n(c.contrats_verrouilles_puis_quittances) + " (" + pc(c.part_verrouille_puis_quittance) + ")", "same contract, both stages in window"],
-      ["Amounts offered, FLOP", m ? n(m.min) + " / " + n(m.median) + " / " + n(m.max) : "—", m ? "min / median / max over " + n(m.compte) + " offers" : "no priced offer in window"]
+      ["Amounts offered, FLOP", m ? n(m.min) + " / " + n(m.median) + " / " + n(m.max) : "-", m ? "min / median / max over " + n(m.compte) + " offers" : "no priced offer in window"]
     ];
     document.querySelector("#commerce-table tbody").innerHTML = crows.map(function (r) {
       return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td class=\"muted\" style=\"font-family:var(--text);text-align:left\">" + r[2] + "</td></tr>";
