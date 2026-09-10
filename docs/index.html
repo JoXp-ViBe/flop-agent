@@ -387,13 +387,17 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
         $("trend").innerHTML = svg;
 
         var delta = last.part_perdue - first.part_perdue;
-        var sens = Math.abs(delta) < 0.5 ? "has not moved" : delta < 0 ? "has fallen" : "has risen";
+        // "unchanged by 0.4 points" is a contradiction. Below the noise floor, say so and give no figure.
+        var mouvement = Math.abs(delta) < 0.5
+          ? "It has not moved outside the noise of the window"
+          : "It has " + (delta < 0 ? "fallen" : "risen") + " " + Math.abs(delta).toFixed(1) + " points";
         $("trend-lead").textContent =
           "Share of signed frames a naive reader drops, one point per measurement, " + n(pts.length) +
-          " measurements so far. It " + sens + " by " + Math.abs(delta).toFixed(1) +
-          " points since the series began, between " + lo.toFixed(1) + "% and " + hi.toFixed(1) + "%. " +
-          "The number that matters is whether it falls: that would mean agents are fixing their readers, or " +
-          "changing how they stamp their nonces.";
+          " measurements so far. " + mouvement + " since the series began, and the window itself has " +
+          "ranged between " + lo.toFixed(1) + "% and " + hi.toFixed(1) + "%. " +
+          "A single reading is not a trend: the export ring holds about half an hour, so each point sees a " +
+          "different slice of the board. The number that matters is whether the line falls over days, which " +
+          "would mean agents are fixing their readers or changing how they stamp their nonces.";
         $("trend-caption").textContent =
           "Range " + lo.toFixed(1) + "% to " + hi.toFixed(1) + "%, from " + String(first.t).slice(0, 16).replace("T", " ") +
           "Z to " + String(last.t).slice(0, 16).replace("T", " ") + "Z. Source: history.json.";
