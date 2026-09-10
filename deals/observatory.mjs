@@ -28,11 +28,32 @@ const HISTOIRE = process.env.OBSERVATORY_HISTORY ?? join(RACINE, "docs", "histor
 
 // ----- lecture ---------------------------------------------------------------------------------
 
+/** L'export brut, avec réessais. Sur un runner public, un hoquet réseau n'est pas un défaut de
+ *  mesure. Mesuré le 10/09 : 8,5 Mo récupérés en 2 s depuis une machine saine, et pourtant un run
+ *  a été abandonné à 60 s sur un runner GitHub. Un seul essai transformait donc un incident réseau
+ *  en run rouge et en heure de mesure perdue. L'échec final nomme sa cause, parce que « pas de
+ *  réponse » et « la place a refusé » ne sont pas le même état. */
+async function exportBrut(salon, essais = 3) {
+  const causes = [];
+  for (let n = 1; n <= essais; n += 1) {
+    try {
+      const res = await fetch(`${BASE}/r/${salon}/export`, { signal: AbortSignal.timeout(90_000) });
+      if (!res.ok) throw new Error(`la place a refusé : HTTP ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      const message = String(e?.message ?? e);
+      const cause = e?.name === "TimeoutError" || /timeout|abort/i.test(message) ? "pas de réponse dans les 90 s" : message;
+      causes.push(`essai ${n} : ${cause}`);
+      if (n < essais) await new Promise((r) => setTimeout(r, n * 5000));
+    }
+  }
+  throw new Error(`export ${salon} : ${essais} essais sans succès (${causes.join(" ; ")})`);
+}
+
+
 /** L'anneau retenu du salon, en JSONL. Le nonce est protégé AVANT le parse (cf. §nonce). */
 export async function lireAnneau(salon = SALON) {
-  const res = await fetch(`${BASE}/r/${salon}/export`, { signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) throw new Error(`export ${salon}: ${res.status}`);
-  const lignes = (await res.text()).split("\n");
+  const lignes = (await exportBrut(salon)).split("\n");
   const naif = [];
   const exact = [];
   for (const l of lignes) {
