@@ -343,9 +343,20 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
   var nf = new Intl.NumberFormat("en-US");
   var n = function (v) { return typeof v === "number" ? nf.format(v) : "-"; };
   var pc = function (v) { return typeof v === "number" ? v.toFixed(1).replace(/\.0$/, "") + "%" : "not measurable"; };
+  // Anything taken from the data goes in as text or through esc(): the page is public, and a browser
+  // error message can quote a slice of the response it failed to parse.
+  var esc = function (v) {
+    return String(v).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  };
 
   function fail(msg) {
-    $("stamp").innerHTML = '<span class="err">' + msg + "</span>";
+    var el = document.createElement("span");
+    el.className = "err";
+    el.textContent = msg;
+    $("stamp").textContent = "";
+    $("stamp").appendChild(el);
   }
 
   fetch("data.json", { cache: "no-store" })
@@ -382,10 +393,19 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
           '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) + '" stroke="var(--rule)"/>' +
           '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' + (H - padB) + '" stroke="var(--rule)"/>' +
           '<text x="' + (padL - 7) + '" y="' + (y(hi) + 4) + '" text-anchor="end" font-size="11" font-family="var(--mono)" fill="var(--ink-3)">' + hi.toFixed(1) + '%</text>' +
-          '<text x="' + (padL - 7) + '" y="' + (y(lo) + 4) + '" text-anchor="end" font-size="11" font-family="var(--mono)" fill="var(--ink-3)">' + lo.toFixed(1) + '%</text>' +
-          '<text x="' + padL + '" y="' + (H - 7) + '" font-size="11" font-family="var(--mono)" fill="var(--ink-3)">' + String(first.t).slice(5, 16).replace("T", " ") + '</text>' +
-          '<text x="' + (W - padR) + '" y="' + (H - 7) + '" text-anchor="end" font-size="11" font-family="var(--mono)" fill="var(--ink-3)">' + String(last.t).slice(5, 16).replace("T", " ") + '</text>';
-        $("trend").innerHTML = svg;
+          '<text x="' + (padL - 7) + '" y="' + (y(lo) + 4) + '" text-anchor="end" font-size="11" font-family="var(--mono)" fill="var(--ink-3)">' + lo.toFixed(1) + '%</text>';
+        $("trend").innerHTML = svg;   // numbers only; the two dates come from the data and go in as text
+        [[padL, null, first.t], [W - padR, "end", last.t]].forEach(function (e) {
+          var label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          label.setAttribute("x", e[0]);
+          label.setAttribute("y", H - 7);
+          if (e[1]) label.setAttribute("text-anchor", e[1]);
+          label.setAttribute("font-size", "11");
+          label.setAttribute("font-family", "var(--mono)");
+          label.setAttribute("fill", "var(--ink-3)");
+          label.textContent = String(e[2]).slice(5, 16).replace("T", " ");
+          $("trend").appendChild(label);
+        });
 
         var delta = last.part_perdue - first.part_perdue;
         // "unchanged by 0.4 points" is a contradiction. Below the noise floor, say so and give no figure.
@@ -498,7 +518,7 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
       var dropped = r.total - r.lisiblesNaif;
       if (dropped > 0 && r.lisiblesNaif > 0) { lucky = r.lisiblesNaif; luckyLen = k; }
       return "<tr" + (dropped > 0 ? ' class="flag"' : "") + ">" +
-        "<td>" + k + "</td><td>" + n(r.total) + "</td>" +
+        "<td>" + esc(k) + "</td><td>" + n(r.total) + "</td>" +
         '<td class="' + (r.valides === r.total ? "ok" : "bad") + '">' + n(r.valides) + "</td>" +
         "<td>" + n(r.lisiblesNaif) + "</td>" +
         '<td class="' + (dropped ? "bad" : "") + '">' + (dropped ? n(dropped) : "0") + "</td></tr>";
