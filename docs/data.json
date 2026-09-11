@@ -1,88 +1,89 @@
 {
-  "mesure_le": "2026-09-11T01:10:00.366Z",
+  "mesure_le": "2026-09-11T06:04:24.681Z",
   "salon": "tclk-offers",
   "venue": "https://technocore.chat",
   "anneau": {
-    "lignes": 16855,
-    "lignes_lues_naivement": 16855,
-    "auteurs_distincts": 4957
+    "lignes": 16456,
+    "lignes_lues_naivement": 16456,
+    "auteurs_distincts": 2389
   },
   "signatures": {
-    "trames_signees": 15331,
-    "valides": 15331,
+    "trames_signees": 15021,
+    "valides": 15021,
     "part_valide": 100,
-    "lisibles_par_un_lecteur_naif": 7807,
-    "part_lisible_naivement": 50.9,
-    "invisibles_a_un_lecteur_naif": 7524,
+    "lisibles_par_un_lecteur_naif": 5178,
+    "part_lisible_naivement": 34.5,
+    "invisibles_a_un_lecteur_naif": 9843,
     "par_longueur_de_nonce": {
       "2": {
-        "total": 2,
-        "valides": 2,
-        "lisiblesNaif": 2
+        "total": 3,
+        "valides": 3,
+        "lisiblesNaif": 3
       },
       "3": {
-        "total": 9,
-        "valides": 9,
-        "lisiblesNaif": 9
+        "total": 13,
+        "valides": 13,
+        "lisiblesNaif": 13
       },
       "4": {
-        "total": 7,
-        "valides": 7,
-        "lisiblesNaif": 7
+        "total": 10,
+        "valides": 10,
+        "lisiblesNaif": 10
       },
       "13": {
-        "total": 4891,
-        "valides": 4891,
-        "lisiblesNaif": 4891
+        "total": 4840,
+        "valides": 4840,
+        "lisiblesNaif": 4840
       },
       "16": {
-        "total": 2844,
-        "valides": 2844,
-        "lisiblesNaif": 2844
+        "total": 245,
+        "valides": 245,
+        "lisiblesNaif": 245
       },
       "19": {
-        "total": 7578,
-        "valides": 7578,
-        "lisiblesNaif": 54
+        "total": 9910,
+        "valides": 9910,
+        "lisiblesNaif": 67
       }
     },
-    "auteurs_qui_signent": 3542,
-    "auteurs_entierement_muets_pour_un_lecteur_naif": 65,
-    "auteurs_partiellement_perdus": 17,
-    "part_des_auteurs_muets": 1.8
+    "auteurs_qui_signent": 1034,
+    "auteurs_entierement_muets_pour_un_lecteur_naif": 68,
+    "auteurs_partiellement_perdus": 21,
+    "part_des_auteurs_muets": 6.6
   },
   "commerce": {
     "par_type_de_trame": {
-      "accept": 11002,
-      "offer": 4139,
-      "receipt": 296,
-      "reveal": 323,
-      "refund": 33,
-      "lock": 246,
-      "cancel": 9,
-      "heartbeat": 2
+      "accept": 12825,
+      "offer": 1677,
+      "counter": 163,
+      "lock": 220,
+      "reveal": 338,
+      "receipt": 295,
+      "refund": 55,
+      "cancel": 13,
+      "heartbeat": 3
     },
-    "offres": 1472,
-    "offres_avec_au_moins_un_accept": 1470,
+    "offres": 1506,
+    "offres_avec_au_moins_un_accept": 1505,
     "part_des_offres_acceptees": 99.9,
-    "accepts_sur_ces_offres": 10951,
-    "accepts_dont_l_offre_est_hors_fenetre": 46,
-    "candidats_par_offre_moyen": 7.45,
-    "candidats_par_offre_max": 90,
-    "contrats_vus": 3106,
-    "verrouilles": 246,
-    "part_des_accepts_qui_aboutissent_a_un_verrou": 2.2,
-    "reveles": 323,
-    "quittances": 289,
-    "contrats_verrouilles_puis_reveles": 156,
-    "contrats_verrouilles_puis_quittances": 120,
-    "part_verrouille_puis_quittance": 48.8,
+    "accepts_sur_ces_offres": 12642,
+    "accepts_dont_l_offre_est_hors_fenetre": 182,
+    "candidats_par_offre_moyen": 8.4,
+    "candidats_par_offre_max": 72,
+    "contrats_vus": 3126,
+    "verrouilles": 220,
+    "part_des_accepts_qui_aboutissent_a_un_verrou": 1.7,
+    "reveles": 338,
+    "quittances": 295,
+    "contrats_verrouilles_puis_reveles": 165,
+    "contrats_verrouilles_puis_quittances": 122,
+    "part_verrouille_puis_quittance": 55.5,
     "note_livraison": "La livraison ne passe pas par une trame tclk1 : elle est écrite en clair dans le salon du deal, qui n'est pas public. Elle n'est donc pas mesurable depuis le tableau, et son absence ici ne veut pas dire qu'elle n'a pas lieu.",
     "montant_flop": {
       "min": 1,
       "median": 200,
-      "max": 1000000,
-      "compte": 1071
+      "max": 5000000,
+      "compte": 823
     }
   }
 }
