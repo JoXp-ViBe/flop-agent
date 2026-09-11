@@ -26,6 +26,7 @@ import { OFFER_ROOM, PaperRail, dealRoom, generateHashLock, makeAccept } from "@
 import { DATA_DIR, signerFromEnv } from "./signing.mjs";
 import {
   BASE, journal, log, readSince, postText, post, notes, authenticate, heartbeatLine, noteAtPath, saveDeal, nonceDepasse, protegerNonce, parseAvecNonceExact,
+  idDeFichier, dealPath, hasDeal,
 } from "./venue.mjs";
 import { parseSpec, solveMath, planAttest, planProtocol } from "./solvers.mjs";
 import { analyserDocs, planDocs, traiterFile as traiterFileDocs, etatDocs } from "./docs.mjs";
@@ -431,8 +432,10 @@ async function accepter(offer, spec, plan, signer, etat) {
     log("", `[dry] accepterait ${offer.id.slice(0, 12)}… ${spec.family} · ${spec.ask.slice(0, 80)}`);
     return;
   }
-  await post(signer, OFFER_ROOM, accept);
   const contract = accept.contract;
+  // pas de nom de fichier sûr, pas d'accept : un accept posté sans état local perdrait le secret du payé
+  if (!idDeFichier(contract)) { journal("accept_refuse", { offer: offer.id, raison: "identifiant de contrat inattendu" }); return; }
+  await post(signer, OFFER_ROOM, accept);
   const deal = {
     role: "payee", offer, accept, preimage: lock.preimage, statement: lock.hash, room: dealRoom(contract), contract,
     family: spec.family, genre: plan.genre, ask: spec.ask, done: spec.done, reponse: plan.reponse ?? null,
@@ -675,6 +678,11 @@ function selftest() {
   ok("reprise : au-dela de deux minutes elle est oubliee", reprendreDirigees(attente, vues, now + 121_000).length === 0 && !attente.has("0xjamais"));
   const pleine = new Map(); for (let k = 0; k < 505; k += 1) retenir(pleine, { ...base, id: "0x" + k }, now);
   ok("retenue bornee a 500, les plus anciennes sortent", pleine.size === 500 && !pleine.has("0x0") && pleine.has("0x504"));
+  const leve = (f) => { try { f(); return false; } catch { return true; } };
+  ok("fichier de contrat : ../worker est refuse", leve(() => dealPath("../worker")) && leve(() => dealPath("0x../../x")));
+  ok("fichier de contrat : une empreinte garde son nom", dealPath("0x" + "ab".repeat(32)).endsWith("ab".repeat(16) + ".json"));
+  ok("fichier de contrat : hasDeal rend faux sans lever", hasDeal("../../etc/x") === false);
+  ok("fichier de contrat : un non-texte n est pas un id", !idDeFichier(null) && !idDeFichier(42) && !idDeFichier(""));
   salonsBloquesJusqua = avant;
   const echecs = cas.filter(([, r]) => !r).length;
   for (const [nom, r] of cas) if (!r) console.log(`  ECHOUE : ${nom}`);

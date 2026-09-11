@@ -270,7 +270,15 @@ export async function foldContract(contract) {
 }
 
 // ----- état local d'un contrat : data/deals/<contract>.json (le secret du payé y vit, 0600) -----
-export function dealPath(id) { return join(DEALS_DIR, `${id.replace(/^0x/, "").slice(0, 32)}.json`); }
+// L'identifiant devient un nom de fichier : seul de l'hexadécimal passe. Aujourd'hui c'est toujours une
+// empreinte calculée ici (contractId de tclk), mais rien ne l'imposait : un id comme "../worker" aurait
+// réécrit data/worker.json. Relevé par une analyse statique le 11/09/2026.
+const ID_DE_FICHIER = /^(0x)?[0-9a-fA-F]{8,128}$/;
+export function idDeFichier(id) { return typeof id === "string" && ID_DE_FICHIER.test(id); }
+export function dealPath(id) {
+  if (!idDeFichier(id)) throw new Error(`identifiant refusé comme nom de fichier : ${JSON.stringify(String(id).slice(0, 40))}`);
+  return join(DEALS_DIR, `${id.replace(/^0x/, "").slice(0, 32)}.json`);
+}
 export function saveDeal(id, obj) {
   mkdirSync(DEALS_DIR, { recursive: true });
   writeFileSync(dealPath(id), JSON.stringify(obj, null, 1), { mode: 0o600 });
@@ -280,7 +288,7 @@ export function loadDeal(id) {
   if (!existsSync(p)) throw new Error(`aucun état local pour ${id} (${p})`);
   return JSON.parse(readFileSync(p, "utf8"));
 }
-export function hasDeal(id) { return existsSync(dealPath(id)); }
+export function hasDeal(id) { return idDeFichier(id) && existsSync(dealPath(id)); }
 
 export function requireLocalVenue(what) {
   if (BASE === DEFAULT_VENUE) {
