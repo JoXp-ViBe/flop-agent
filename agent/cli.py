@@ -91,7 +91,9 @@ def cmd_presence(une_fois: bool = True) -> int:
     periode = int(os.environ.get("FLOP_PERIODE", "1800"))
     while True:
         try:
-            msgs = ident.relever_boite()
+            # un autre processus (publish, note-snapshot) a pu écrire l'état depuis le passage précédent
+            ident.recharger()
+            msgs = ident.relever_boite(sans_nous=True)   # nos lignes d'entretien ne sont pas du courrier
             for m in msgs:
                 journal(dossier, "mailbox", seq=m.get("seq"), ts=m.get("ts"), de=m.get("from"),
                         did=m.get("did"), texte=(m.get("text") or "")[:500])
@@ -101,6 +103,10 @@ def cmd_presence(une_fois: bool = True) -> int:
             garde = ident.garder_note()
             if garde.get("note") == "alteree":
                 journal(dossier, "note_alteree", **garde)
+            # la place efface ce qu'on n'écrit plus depuis 7 jours : la boîte et la note s'entretiennent
+            ent = ident.entretenir()
+            if ent:
+                journal(dossier, "entretien", **ent)
             print("%s présence %s, %d message(s) neuf(s)" % (
                 datetime.now(timezone.utc).strftime("%H:%M"), "écrite" if ok else "REFUSÉE", len(msgs)))
         except (ErreurVenue, ErreurSigneur) as e:

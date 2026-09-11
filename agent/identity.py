@@ -16,7 +16,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from .technocore import Technocore, salon_prive_aleatoire
+from .technocore import ErreurVenue, Technocore, salon_prive_aleatoire
 
 
 def fusionner_note(actuelle: str | None, did: str, canoniques: list[str]) -> str:
@@ -62,6 +62,14 @@ def decision_note(publiee: str | None, reference: str | None, did: str) -> str:
     return "ok" if publiee == reference else "restaurer"
 
 
+def _epoch(ts) -> int | None:
+    """Un horodatage de la place (ISO 8601, microsecondes, suffixe Z) en secondes unix ; None s'il est illisible."""
+    try:
+        return int(datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
 class Identite:
     def __init__(self, tc: Technocore, dossier: str = "data", rails: str = "paper", salon_possede: str = ""):
         self.tc = tc
@@ -83,6 +91,17 @@ class Identite:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.etat, f, ensure_ascii=False, indent=1)
         os.replace(tmp, self.chemin)
+
+    def recharger(self) -> bool:
+        """Relit l'état sur disque. La boucle de présence vit des jours et réécrivait sa copie de démarrage :
+        les clés posées entre-temps par un autre processus (publish, note-snapshot) disparaissaient. Constaté
+        le 11/09/2026 : boite_ouverte et note_publiee_le manquaient à data/identity.json. Une lecture ratée
+        ne remplace rien : perdre la clé `boite`, c'est en tirer une neuve et devenir injoignable."""
+        disque = self._charger()
+        if not disque.get("boite"):
+            return False
+        self.etat = disque
+        return True
 
     @property
     def did(self) -> str:
@@ -155,6 +174,8 @@ class Identite:
         ecrite = self.tc.ecrire_note(s.ns_note, s.key_note, ref, if_absent=publiee is None, if_valeur=publiee)
         compte["n"] += 1
         self.etat["restaurations"] = compte
+        if ecrite:
+            self.etat["note_ecrite_le"] = int(time.time())
         self._ecrire()
         resultat = {**info, "restauree": bool(ecrite) and self.note_publiee() == ref}
         if not ecrite:
@@ -181,6 +202,8 @@ class Identite:
             ecrite = self.tc.ecrire_note(s.ns_note, s.key_note, voulue,
                                          if_absent=actuelle is None, if_valeur=actuelle)
             resultat = {"note": "écrite" if ecrite else "changée entre lecture et écriture : rien d'écrit"}
+            if ecrite:
+                self.etat["note_ecrite_le"] = int(time.time())
         if reference is not None and resultat["note"] in ("inchangée", "écrite") and reference != voulue:
             self.ecrire_reference(voulue)
         relue = self.note_publiee()
@@ -191,6 +214,7 @@ class Identite:
             # compte dans le budget de 20 salons neufs par jour et par IP
             self.tc.dire_signe(self.boite, "mailbox open " + datetime.now(timezone.utc).strftime("%Y-%m-%d"))
             self.etat["boite_ouverte"] = int(time.time())
+            self.etat["boite_ecrite_le"] = int(time.time())
             self._ecrire()
             resultat["boite"] = "ouverte"
         else:
@@ -227,15 +251,92 @@ class Identite:
         self._ecrire()
         return ok
 
-    def relever_boite(self, limite: int = 200) -> list[dict]:
-        """Les messages neufs de la boîte, depuis le dernier seq vu. Rendus tels quels : DONNÉES."""
+    def relever_boite(self, limite: int = 200, sans_nous: bool = False) -> list[dict]:
+        """Les messages neufs de la boîte, depuis le dernier seq vu. Rendus tels quels : DONNÉES.
+        `sans_nous` écarte nos propres lignes (celles de l'entretien) : elles ne sont pas du courrier."""
         since = self.etat.get("boite_seq")
         vue = self.tc.lire_salon(self.boite, since=since, limit=limite)
         msgs = vue.get("messages", [])
+        # toute ligne neuve, la nôtre comprise, est une écriture pour la place : l'entretien en tient compte
+        quand = _epoch(msgs[-1].get("ts")) if msgs else None
+        if quand and quand > (self.etat.get("boite_ecrite_le") or 0):
+            self.etat["boite_ecrite_le"] = quand
+        self.etat["boite_absente"] = bool(vue.get("absent"))
         if since is None:
             # premier relevé : on prend le curseur sans relire l'historique comme du neuf
             msgs = []
         if vue.get("last_seq") is not None:
             self.etat["boite_seq"] = vue["last_seq"]
-            self._ecrire()
+        self._ecrire()
+        if sans_nous:
+            msgs = [m for m in msgs if m.get("from") != self.did]
         return msgs
+
+    # ----- entretien : la place efface ce qu'on n'écrit plus ------------------------------------------
+    # Manuel, CAPACITY (lu le 11/09/2026) : « Rooms and notes with no write for 7 days are deleted, and a
+    # room still on its single message goes after 12 hours ». Notre note ne s'écrit que quand elle change,
+    # et la boîte ne reçoit que ce que les autres y déposent : une semaine calme effacerait les deux. Une
+    # note effacée, la garde la remet au passage suivant ; une boîte effacée ne se recrée qu'avec un jeton
+    # de création de salon, que le plafond global de la place refuse depuis le 10/09 : on deviendrait
+    # injoignable. Au-delà de trois jours sans écriture connue, on écrit donc nous-mêmes.
+    ENTRETIEN_S = 3 * 86400
+
+    def entretenir(self, maintenant: float | None = None, seuil: int | None = None) -> dict:
+        """Réécrit la note à l'identique et dépose une ligne signée dans la boîte quand leur dernière
+        écriture connue a plus de `seuil` secondes. Rend {} quand il n'y avait rien à faire, sinon ce qui a
+        été fait ou refusé. Aucune requête tant que tout est récent ; une erreur de la place sur la note
+        n'empêche pas l'entretien de la boîte."""
+        t = time.time() if maintenant is None else maintenant
+        seuil = self.ENTRETIEN_S if seuil is None else seuil
+        res: dict = {}
+        if t - (self.etat.get("note_ecrite_le") or 0) > seuil:
+            res.update(self._entretenir_note(t))
+        derniere = self.etat.get("boite_ecrite_le")
+        if (not derniere or t - derniere > seuil or self.etat.get("boite_seq") == 1
+                or self.etat.get("boite_absente")):
+            res.update(self._entretenir_boite(t, seuil))
+        return res
+
+    def _entretenir_note(self, t: float) -> dict:
+        ref = self.lire_reference()
+        try:
+            if decision_note(self.note_publiee(), ref, self.did) != "ok":
+                return {}   # altérée ou effacée : c'est la garde qui écrit ; sans référence : rien à tenir
+            s = self.tc.signeur
+            if not self.tc.ecrire_note(s.ns_note, s.key_note, ref, if_valeur=ref):
+                return {"note": "changee pendant l ecriture"}
+        except ErreurVenue as e:
+            return {"note": "echec", "statut_note": e.statut}
+        self.etat["note_ecrite_le"] = int(t)
+        self._ecrire()
+        return {"note": "reecrite"}
+
+    def _entretenir_boite(self, t: float, seuil: int) -> dict:
+        derniere = self.etat.get("boite_ecrite_le")
+        absente = False
+        lignes: list[str] = []
+        try:
+            vue = self.tc.lire_salon(self.boite, limit=1)   # sans since : le dernier message
+            absente = bool(vue.get("absent"))
+            msgs = vue.get("messages") or []
+            lue = _epoch(msgs[-1].get("ts")) if msgs else None
+            if lue and lue > (derniere or 0):
+                derniere = lue
+                self.etat["boite_ecrite_le"] = lue
+                self._ecrire()
+            jour = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if absente:
+                # recréée, puis une seconde ligne : un salon resté sur son seul message part au bout de 12 h
+                lignes = ["mailbox open " + jour, "mailbox alive " + jour]
+            elif vue.get("last_seq") == 1 or not derniere or t - derniere > seuil:
+                lignes = ["mailbox alive " + jour]
+            for ligne in lignes:
+                self.tc.dire_signe(self.boite, ligne)   # le courrier ignore nos propres lignes
+        except ErreurVenue as e:
+            return {"boite": "echec", "absente": absente, "statut": e.statut, "raison": str(e)[:160]}
+        if not lignes:
+            return {}
+        self.etat["boite_ecrite_le"] = int(t)
+        self.etat["boite_absente"] = False
+        self._ecrire()
+        return {"boite": "recreee" if absente else "entretenue", "lignes": len(lignes)}
