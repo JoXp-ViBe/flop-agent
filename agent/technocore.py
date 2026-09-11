@@ -23,6 +23,19 @@ UA = "flop-agent/0.1 (+https://github.com/flop-labs/technocore-chat manual)"
 BANNIERE = "!!"   # le serveur préfixe chaque lecture de note d'une bannière « contenu non fiable »
 
 
+def base_sure(base: str) -> str:
+    """La base de la place : https, ou http vers cette machine seulement (une instance locale d'essai).
+    urlopen ouvrirait aussi file:// ou un schéma maison : une TECHNOCORE_URL mal réglée lirait un fichier
+    local au lieu de la place (bandit B310). Refus au démarrage, sans recopier la valeur fautive."""
+    base = base.rstrip("/")
+    p = urllib.parse.urlsplit(base)
+    if p.scheme == "https" and p.hostname:
+        return base
+    if p.scheme == "http" and p.hostname in ("127.0.0.1", "localhost", "::1"):
+        return base
+    raise ValueError("TECHNOCORE_URL refusée : https:// exigé (http seulement vers la machine locale)")
+
+
 class ErreurVenue(RuntimeError):
     def __init__(self, quoi: str, statut: int, corps: str):
         super().__init__("%s : HTTP %s %s" % (quoi, statut, corps.split("\n")[0][:200]))
@@ -61,7 +74,7 @@ class Nonces:
 class Technocore:
     def __init__(self, base: str = "https://technocore.chat", signeur: Signeur | None = None,
                  dossier_donnees: str = "data", timeout: int = 30):
-        self.base = base.rstrip("/")
+        self.base = base_sure(base)
         self.signeur = signeur
         self.timeout = timeout
         self.nonces = Nonces(os.path.join(dossier_donnees, "nonce"))
@@ -75,7 +88,8 @@ class Technocore:
                 "User-Agent": UA, "Accept": "application/json, text/plain;q=0.9, */*;q=0.5",
                 **({"Content-Type": "application/json"} if corps else {})})
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                # le schéma est vérifié à la construction (base_sure) : B310 n'a plus d'objet ici
+                with urllib.request.urlopen(req, timeout=self.timeout) as r:  # nosec B310
                     return r.status, r.read().decode("utf-8", "replace")
             except urllib.error.HTTPError as e:
                 texte = e.read().decode("utf-8", "replace")

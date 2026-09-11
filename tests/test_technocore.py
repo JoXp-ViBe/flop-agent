@@ -6,6 +6,8 @@ import http.server
 import threading
 import time
 
+import pytest
+
 from agent.technocore import Technocore
 
 
@@ -46,3 +48,13 @@ def test_429_court_est_reessaye(tmp_path):
     st, _ = tc._requete("/r/x", "essai")
     srv.shutdown()
     assert st == 200
+
+
+def test_base_https_seulement(tmp_path):
+    """urlopen ouvrirait file:// : la base de la place est https, http seulement vers la machine locale."""
+    for refusee in ("file:///etc/passwd", "ftp://technocore.chat", "http://technocore.chat",
+                    "http://localhost.example.org", "https://"):
+        with pytest.raises(ValueError):
+            Technocore(refusee, None, str(tmp_path))
+    assert Technocore("https://technocore.chat/", None, str(tmp_path)).base == "https://technocore.chat"
+    assert Technocore("http://127.0.0.1:8080", None, str(tmp_path)).base == "http://127.0.0.1:8080"
