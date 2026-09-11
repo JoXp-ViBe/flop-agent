@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalMessage, protegerNonce } from "./signing_public.mjs";
+import { contractId, decodeFrame, encodeFrame, makeAccept, makeOffer } from "@flop-labs/tclk";
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = (process.env.TECHNOCORE_URL ?? "https://technocore.chat").replace(/\/$/, "");
@@ -92,6 +93,63 @@ export function typeTrame(texte) {
   }
 }
 
+// ----- ce que le décodeur officiel accepte -----------------------------------------------------------
+
+/** Les sept types de trame du protocole tclk/1. Tout autre type annoncé est hors protocole. */
+export const TYPES_TCLK = ["offer", "accept", "lock", "reveal", "refund", "cancel", "receipt"];
+
+/** Un message qui a la forme d'une offre sans être une ligne tclk1 : aucun décodeur ne le lira. */
+export function formeDOffreHorsTclk(texte) {
+  const t = String(texte ?? "");
+  return !t.startsWith("tclk1 ") && /"type"\s*:\s*"offer"/i.test(t);
+}
+
+const CHAMP_DU_TYPE = new RegExp(`^(unknown|missing) field on (?:${TYPES_TCLK.join("|")}): ([\\s\\S]*)$`);
+const nomAffichable = (nom, re) => (re.test(nom) ? nom : "(unprintable name)");
+
+/**
+ * La raison d'un refus, sans la valeur refusée. Le décodeur 0.1.0 recopie parfois dans son message la
+ * valeur qu'il rejette : c'est une entrée anonyme, elle ne doit pas atteindre la page publique. On garde
+ * la règle enfreinte, jamais la valeur, et un nom de champ ou de type n'est repris que s'il est court et
+ * sans caractère spécial.
+ */
+export function motifDeRefus(e) {
+  let m = String(e?.message ?? e ?? "").replace(/^tclk:\s*/, "");
+  m = m.replace(/ is malformed: [\s\S]*$/, " is malformed").replace(/\s*\(expected [^)]*\)/, "");
+  m = m.replace(CHAMP_DU_TYPE, (_, sorte, nom) => `${sorte} field: ${nomAffichable(nom, /^[A-Za-z0-9_]{1,32}$/)}`);
+  m = m.replace(/^(unknown field on [a-z]+): ([\s\S]*)$/, (_, debut, nom) => `${debut}: ${nomAffichable(nom, /^[A-Za-z0-9_]{1,32}$/)}`);
+  m = m.replace(/^unknown frame type: ([\s\S]*)$/, (_, nom) => `unknown frame type: ${nomAffichable(nom, /^[a-z][a-z0-9_-]{0,23}$/)}`);
+  return /^[A-Za-z0-9 _.:()|,/-]{1,90}$/.test(m) ? m : "other reason";
+}
+
+/**
+ * Ce que le décodeur officiel dit d'un message, plus les deux règles qu'il ne peut pas vérifier seul : le
+ * `from` du cadre doit être l'auteur signé du message, et la signature doit se vérifier. null si le
+ * message n'est pas une ligne tclk1.
+ */
+export function lireTrame(rec, valide) {
+  const texte = typeof rec?.text === "string" ? rec.text : "";
+  if (!texte.startsWith("tclk1 ")) return null;
+  let cadre;
+  try {
+    cadre = decodeFrame(texte);
+  } catch (e) {
+    return { conforme: false, motif: motifDeRefus(e) };
+  }
+  if (cadre.from !== rec.from) return { conforme: false, motif: "from is not the signed sender" };
+  if (!valide) return { conforme: false, motif: "signature does not verify" };
+  return { conforme: true, cadre };
+}
+
+/** Les n plus fréquents, le reste regroupé : une entrée anonyme ne doit pas pouvoir allonger la page. */
+export function lesPlusFrequents(compte, n) {
+  const tries = [...compte].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  const tete = tries.slice(0, n);
+  const reste = tries.slice(n).reduce((s, [, v]) => s + v, 0);
+  if (reste) tete.push(["(other)", reste]);
+  return tete;
+}
+
 /** Longueur du nonce en chiffres : c'est elle qui décide si un lecteur naïf voit la trame. */
 export function chiffresDuNonce(nonce) {
   const s = String(nonce ?? "");
@@ -111,18 +169,32 @@ export function survitAuNombre(nonce) {
 
 // ----- l'agrégat ----------------------------------------------------------------------------------
 
-/** Ce que l'on peut dire d'un anneau : volumes, signatures, parcours d'un contrat, lisibilité. */
+/**
+ * Ce que l'on peut dire d'un anneau : volumes, signatures, parcours d'un contrat, lisibilité.
+ *
+ * Le commerce ne compte que les trames que le décodeur officiel accepte, dont l'auteur signé est celui
+ * qu'elles nomment : ce qu'un agent bâti sur la bibliothèque officielle voit réellement. Mesuré le 11/09 :
+ * 5 647 accepts sur 7 973 n'avaient pas l'identifiant de contrat que la spécification exige. Le décodeur
+ * les écarte, et aucun des 5 410 dont l'offre était dans la fenêtre n'avait été suivi d'une trame de
+ * contrat. Les compter gonflait la concurrence et faisait paraître faible le taux de verrouillage. Tout ce
+ * qui est écarté reste compté, à part, par raison.
+ */
 export function agreger(exact, valides) {
-  const parType = {};
   const auteurs = new Set();
   // Par auteur : combien de ses trames signees un lecteur naif perd. On ne garde que des
   // COMPTES ; aucun DID de tiers ne sort de cette fonction, et la page n en publie aucun.
   const parAuteur = new Map();
   const parLongueur = {};
-  const offres = new Map();     // id -> {amount, asset, from}
-  const accepts = new Map();    // ref d'offre -> Set(auteurs)
-  const contrats = new Map();   // contract -> {lock, deliver, reveal, receipt}
-  let signees = 0, lisiblesNaif = 0;
+  const parType = new Map();       // type du protocole -> { vues, conformes }
+  const horsProtocole = new Map(); // type annoncé hors protocole -> trames
+  const motifs = new Map();        // raison du refus -> trames
+  const offres = new Map();        // id -> { amount, asset, cadre }, offres conformes seulement
+  const idsOffresRefusees = new Set();
+  const accepts = new Map();       // ref d'offre -> Set(auteurs), accepts conformes seulement
+  const contrats = new Map();      // contract -> { accept, lock, reveal, receipt, ... }
+  const nommes = new Set();        // contrats nommés par une trame de suite, conforme ou non
+  const acceptsRefuses = [];
+  let signees = 0, lisiblesNaif = 0, tramesRefusees = 0, tramesOffreRefusees = 0, horsTclk = 0;
 
   for (let i = 0; i < exact.length; i += 1) {
     const r = exact[i];
@@ -142,11 +214,35 @@ export function agreger(exact, valides) {
         parAuteur.set(r.from, a);
       }
     }
-    const f = typeTrame(r.text);
-    if (!f) continue;
-    parType[f.type] = (parType[f.type] ?? 0) + 1;
-    if (f.type === "offer" && f.id) offres.set(f.id, { amount: f.amount, asset: f.asset, from: r.from });
-    if (f.type === "accept" && f.ref) {
+    if (formeDOffreHorsTclk(r.text)) horsTclk += 1;
+    const lu = lireTrame(r, valides[i]);
+    if (!lu) continue;
+    const declare = typeTrame(r.text); // ce que la trame dit être, lu sans le décodeur
+    const type = declare?.type ?? null;
+    if (TYPES_TCLK.includes(type)) {
+      const t = parType.get(type) ?? { vues: 0, conformes: 0 };
+      t.vues += 1;
+      if (lu.conforme) t.conformes += 1;
+      parType.set(type, t);
+      if (type !== "offer" && type !== "accept" && typeof declare.contract === "string") nommes.add(declare.contract);
+    } else if (type !== null) {
+      const nom = nomAffichable(type, /^[a-z][a-z0-9_-]{0,23}$/);
+      horsProtocole.set(nom, (horsProtocole.get(nom) ?? 0) + 1);
+    }
+    if (!lu.conforme) {
+      tramesRefusees += 1;
+      const cle = TYPES_TCLK.includes(type) ? `${type}: ${lu.motif}` : lu.motif;
+      motifs.set(cle, (motifs.get(cle) ?? 0) + 1);
+      if (type === "offer") {
+        tramesOffreRefusees += 1;
+        if (typeof declare.id === "string") idsOffresRefusees.add(declare.id);
+      }
+      if (type === "accept") acceptsRefuses.push(r.text);
+      continue;
+    }
+    const f = lu.cadre;
+    if (f.type === "offer") offres.set(f.id, { amount: f.amount, asset: f.asset, cadre: f });
+    if (f.type === "accept") {
       if (!accepts.has(f.ref)) accepts.set(f.ref, new Set());
       accepts.get(f.ref).add(r.from);
     }
@@ -155,6 +251,23 @@ export function agreger(exact, valides) {
       c[f.type] = true;
       contrats.set(f.contract, c);
     }
+  }
+
+  // Un accept écarté a-t-il quand même donné lieu à un contrat ? On recalcule l'identifiant comme le
+  // ferait le payeur, avec les champs que l'accept porte, contre l'offre conforme qu'il vise, puis on
+  // cherche une trame de suite qui le nomme. Zéro veut dire : personne n'y a donné suite.
+  let refusesOffreVue = 0, refusesSuivis = 0;
+  for (const texte of acceptsRefuses) {
+    let j;
+    try { j = JSON.parse(texte.slice(6)); } catch { continue; }
+    const o = j && typeof j.ref === "string" ? offres.get(j.ref) : undefined;
+    if (!o) continue;
+    refusesOffreVue += 1;
+    let calcule = null;
+    try {
+      calcule = contractId(o.cadre, { from: j.from, ref: o.cadre.id, statement: j.statement, paymentKey: j.paymentKey, nonce: j.nonce });
+    } catch { calcule = null; }
+    if ((calcule !== null && nommes.has(calcule)) || (typeof j.contract === "string" && nommes.has(j.contract))) refusesSuivis += 1;
   }
 
   // Le parcours d'un contrat. Un taux d'enchaînement se compte CONTRAT PAR CONTRAT : diviser
@@ -193,7 +306,8 @@ export function agreger(exact, valides) {
     else if (a.perdues > 0) auteursPartiels += 1;
   }
 
-  // les montants annoncés
+  // les montants annoncés, sur les offres conformes seulement : un montant falsifié sous l'identifiant
+  // d'une vraie offre ne doit rien peser
   const montants = [];
   for (const o of offres.values()) {
     const m = Number(o.amount);
@@ -201,6 +315,7 @@ export function agreger(exact, valides) {
   }
   montants.sort((a, b) => a - b);
 
+  const acc = parType.get("accept") ?? { vues: 0, conformes: 0 };
   return {
     lignes: exact.length,
     auteurs: auteurs.size,
@@ -211,8 +326,18 @@ export function agreger(exact, valides) {
     valides: valides.filter(Boolean).length,
     lisiblesNaif,
     parLongueur,
-    parType,
+    parType: Object.fromEntries(TYPES_TCLK.filter((t) => parType.has(t)).map((t) => [t, parType.get(t)])),
+    horsProtocole: Object.fromEntries(lesPlusFrequents(horsProtocole, 10)),
+    tramesRefusees,
+    motifsDeRefus: lesPlusFrequents(motifs, 12),
     offres: offres.size,
+    offresRefusees: [...idsOffresRefusees].filter((id) => !offres.has(id)).length,
+    tramesOffreRefusees,
+    horsTclkEnFormeDOffre: horsTclk,
+    acceptsVus: acc.vues,
+    acceptsRefuses: acc.vues - acc.conformes,
+    acceptsRefusesOffreVue: refusesOffreVue,
+    acceptsRefusesSuivis: refusesSuivis,
     offresAvecAccept,
     acceptsTotal: total,
     acceptsHorsFenetre,
@@ -238,7 +363,11 @@ export function part(numerateur, denominateur) {
 
 // ----- l'historique -------------------------------------------------------------------------------
 
-/** Les quelques chiffres qu'il vaut la peine de suivre dans le temps. */
+/**
+ * Les quelques chiffres qu'il vaut la peine de suivre dans le temps. Depuis le 11/09 le commerce ne compte
+ * que les trames que le décodeur officiel accepte : ses champs portent un nom neuf (offres_conformes et les
+ * suivants) plutôt que l'ancien, pour que la rupture se voie dans la série au lieu de s'y fondre.
+ */
 export function pointDHistoire(donnees) {
   const s = donnees.signatures;
   const c = donnees.commerce;
@@ -249,9 +378,10 @@ export function pointDHistoire(donnees) {
     part_perdue: s.part_lisible_naivement === null ? null : Number((100 - s.part_lisible_naivement).toFixed(1)),
     auteurs_muets: s.auteurs_entierement_muets_pour_un_lecteur_naif,
     auteurs_signants: s.auteurs_qui_signent,
-    offres: c.offres,
-    candidats_moyen: c.candidats_par_offre_moyen,
-    accepts_vers_verrou: c.part_des_accepts_qui_aboutissent_a_un_verrou,
+    offres_conformes: c.offres,
+    candidats_moyen_conformes: c.candidats_par_offre_moyen,
+    part_accepts_conformes_vers_verrou: c.part_des_accepts_qui_aboutissent_a_un_verrou,
+    part_accepts_refuses: c.refus?.part_des_accepts_refuses ?? null,
   };
 }
 
@@ -290,41 +420,113 @@ export function selftest() {
   ok("part : dénominateur nul rend null, jamais zéro", part(3, 0) === null);
   ok("part : arrondi à une décimale", part(1394, 1400) === 99.6);
 
+  // Des trames réelles, construites par la bibliothèque officielle : le décodeur est désormais juge.
+  const DA = "did:key:z6Mk" + "a".repeat(44);
+  const DB = "did:key:z6Mk" + "b".repeat(44);
+  const DC = "did:key:z6Mk" + "c".repeat(44);
+  const base = { from: DA, role: "payer", amount: "400", asset: "FLOP", lock: "hash", rails: ["flop-htlc"],
+    claimByMs: 1_789_000_000_000, refundAfterMs: 1_789_000_600_000, expiresMs: 1_789_000_300_000 };
+  const O1 = makeOffer({ ...base, nonce: "0a0a0a0a" });
+  const O2 = makeOffer({ ...base, nonce: "0c0c0c0c" });
+  const O3 = makeOffer({ ...base, nonce: "0e0e0e0e" });
+  const A1 = makeAccept(O1, { from: DB, statement: "0x" + "11".repeat(32), nonce: "0b0b0b0b" });
+  const A2 = makeAccept(O2, { from: DC, statement: "0x" + "22".repeat(32), nonce: "0d0d0d0d" });
+  const verrou = (contract, from = DA) => encodeFrame({ type: "lock", from, contract, rail: "flop-htlc", ref: "e1" });
+  const quittance = (contract, from = DA) => encodeFrame({ type: "receipt", from, contract, outcome: "claimed" });
+  const brut = (cadre) => "tclk1 " + JSON.stringify(cadre);
+  const champsDe = (cadre) => JSON.parse(encodeFrame(cadre).slice(6));
+
   const exact = [
-    { from: "did:A", sig: "s", nonce: "1788976440077681234", text: 'tclk1 {"type":"offer","id":"0x1","amount":"400","asset":"FLOP"}' },
-    { from: "did:B", sig: "s", nonce: "1788950516570", text: 'tclk1 {"type":"accept","ref":"0x1","contract":"0xc"}' },
-    { from: "did:A", sig: "s", nonce: "1788950516571", text: 'tclk1 {"type":"lock","contract":"0xc"}' },
-    { from: "did:B", sig: "s", nonce: "1788950516572", text: 'tclk1 {"type":"deliver","contract":"0xc"}' },
-    { from: "did:C", sig: "s", nonce: "1788950516573", text: "une ligne en clair" },
+    { from: DA, sig: "s", nonce: "1788976440077681234", text: encodeFrame(O1) },
+    { from: DB, sig: "s", nonce: "1788950516570", text: encodeFrame(A1) },
+    { from: DA, sig: "s", nonce: "1788950516571", text: verrou(A1.contract) },
+    { from: DB, sig: "s", nonce: "1788950516572", text: 'tclk1 {"type":"deliver","contract":"' + A1.contract + '"}' },
+    { from: DC, sig: "s", nonce: "1788950516573", text: "une ligne en clair" },
   ];
   const a = agreger(exact, [true, true, true, true, true]);
   ok("agrégat : lignes, auteurs, signées", a.lignes === 5 && a.auteurs === 3 && a.signees === 5);
   ok("agrégat : une seule trame illisible naïvement", a.lisiblesNaif === 4);
-  ok("agrégat : les types comptés", a.parType.offer === 1 && a.parType.accept === 1 && a.parType.deliver === 1);
-  // `deliver` n'existe pas comme trame tclk1 sur le tableau : la livraison est en clair dans le
-  // salon du deal, non public. On ne compte donc que ce qui est réellement observable ici.
+  ok("agrégat : les types du protocole, vus et conformes", a.parType.offer?.conformes === 1 && a.parType.accept?.conformes === 1 && a.parType.lock?.conformes === 1);
+  // `deliver` n'est pas une trame tclk/1 : la livraison est en clair dans le salon du deal, non public.
+  // Elle est comptée hors protocole et refusée par le décodeur, jamais mêlée au commerce.
+  ok("agrégat : un type hors protocole est compté à part", a.horsProtocole.deliver === 1 && a.tramesRefusees === 1);
   ok("agrégat : le contrat suivi jusqu'au verrou", a.contrats === 1 && a.verrouilles === 1);
   ok("agrégat : un candidat sur l'unique offre", a.offresAvecAccept === 1 && a.candidatsMoyen === 1);
   // un accept dont l'offre est sortie de la fenêtre ne doit pas gonfler le taux au-dessus de 100 %
   const horsFenetre = agreger([
-    { from: "did:A", sig: "s", nonce: "1", text: 'tclk1 {"type":"offer","id":"0x1","amount":"9","asset":"FLOP"}' },
-    { from: "did:B", sig: "s", nonce: "2", text: 'tclk1 {"type":"accept","ref":"0x1"}' },
-    { from: "did:C", sig: "s", nonce: "3", text: 'tclk1 {"type":"accept","ref":"0xABSENTE"}' },
+    { from: DA, sig: "s", nonce: "1", text: encodeFrame(O1) },
+    { from: DB, sig: "s", nonce: "2", text: encodeFrame(A1) },
+    { from: DC, sig: "s", nonce: "3", text: encodeFrame(A2) },
   ], [true, true, true]);
   ok("agrégat : un accept dont l'offre a quitté l'anneau est compté à part", horsFenetre.offresAvecAccept === 1 && horsFenetre.acceptsHorsFenetre === 1);
   ok("agrégat : le taux ne peut donc pas dépasser 100 %", part(horsFenetre.offresAvecAccept, horsFenetre.offres) <= 100);
   // un enchaînement se compte contrat par contrat : une quittance dont le verrou a quitté
   // l'anneau ne doit pas faire monter le taux au-dessus de 100 %
+  const C1 = "0x" + "c1".repeat(32);
   const enchaine = agreger([
-    { from: "did:A", sig: "s", nonce: "1", text: 'tclk1 {"type":"lock","contract":"0xc1"}' },
-    { from: "did:A", sig: "s", nonce: "2", text: 'tclk1 {"type":"receipt","contract":"0xc1"}' },
-    { from: "did:B", sig: "s", nonce: "3", text: 'tclk1 {"type":"receipt","contract":"0xORPHELIN"}' },
+    { from: DA, sig: "s", nonce: "1", text: verrou(C1) },
+    { from: DA, sig: "s", nonce: "2", text: quittance(C1) },
+    { from: DB, sig: "s", nonce: "3", text: quittance("0x" + "0f".repeat(32), DB) },
   ], [true, true, true]);
   ok("agrégat : quittances 2, verrous 1, mais un seul contrat enchaîné", enchaine.quittances === 2 && enchaine.verrouilles === 1 && enchaine.verrouEtQuittance === 1);
   ok("agrégat : le taux d'enchaînement reste à 100 % au plus", part(enchaine.verrouEtQuittance, enchaine.verrouilles) === 100);
   ok("agrégat : le calcul naïf, lui, aurait donné 200 %", part(enchaine.quittances, enchaine.verrouilles) === 200);
   ok("agrégat : le montant relevé", a.montant && a.montant.min === 400 && a.montant.compte === 1);
   ok("agrégat : la longueur 19 isolée", a.parLongueur["19"].total === 1 && a.parLongueur["19"].lisiblesNaif === 0);
+
+  // ---- le décodeur officiel décide de ce qui compte
+  const conf = agreger([
+    { from: DA, sig: "s", nonce: "1", text: encodeFrame(O1) },
+    { from: DA, sig: "s", nonce: "2", text: brut({ ...champsDe(O1), amount: "9000" }) },   // même id, montant changé
+    { from: DA, sig: "s", nonce: "3", text: brut({ ...champsDe(O1), description: "hi" }) }, // champ inconnu
+    { from: DB, sig: "s", nonce: "4", text: encodeFrame(O3) },                              // from d'un autre
+    { from: DA, sig: "s", nonce: "5", text: encodeFrame(O3) },                              // signature invalide
+    { from: DC, sig: "s", nonce: "6", text: 'probe v1 | {"type":"offer","amount":"5","asset":"FLOP"}' },
+    { from: DB, sig: "s", nonce: "7", text: 'tclk1 {"type":"counter","ref":"x"}' },
+  ], [true, true, true, true, false, true, true]);
+  const motifsConf = conf.motifsDeRefus.map(([m]) => m);
+  ok("offres : seule l'offre que le décodeur accepte compte", conf.offres === 1 && conf.parType.offer.vues === 5 && conf.parType.offer.conformes === 1);
+  ok("offres : un montant falsifié sous le même id ne compte pas", motifsConf.includes("offer: offer id mismatch") && conf.montant.compte === 1 && conf.montant.max === 400);
+  ok("offres : un champ inconnu est refusé", motifsConf.includes("offer: unknown field: description"));
+  ok("offres : un from qui n'est pas l'auteur signé est refusé", motifsConf.includes("offer: from is not the signed sender"));
+  ok("offres : une signature invalide ne compte pas", motifsConf.includes("offer: signature does not verify"));
+  ok("offres : les refusées comptées à part, trames et identifiants", conf.tramesOffreRefusees === 4 && conf.offresRefusees === 1);
+  ok("offres : une forme d'offre hors tclk1 est comptée à part", conf.horsTclkEnFormeDOffre === 1);
+  ok("offres : un type hors protocole n'entre pas dans les types", conf.horsProtocole.counter === 1 && !("counter" in conf.parType));
+  ok("offres : aucun DID ni valeur refusée ne sort", !JSON.stringify(conf).includes("did:key") && !JSON.stringify(conf).includes("9000"));
+
+  // ---- une valeur refusée ne ressort jamais : le décodeur la recopie dans son message, pas nous
+  const piege = agreger([
+    { from: DA, sig: "s", nonce: "1", text: brut({ ...champsDe(O1), amount: "<img src=x onerror=alert(1)>" }) },
+    { from: DA, sig: "s", nonce: "2", text: 'tclk1 {"type":"<b>x</b>"}' },
+    { from: DA, sig: "s", nonce: "3", text: 'tclk1 {"type":"accept","<script>":1}' },
+  ], [true, true, true]);
+  const recopie = JSON.stringify(piege);
+  ok("assainissement : ni balise ni valeur refusée dans l'agrégat", !recopie.includes("<") && !recopie.includes("onerror"));
+  ok("assainissement : la règle enfreinte reste lisible", piege.motifsDeRefus.some(([m]) => m === "offer: amount is malformed"));
+  ok("assainissement : motifs directs", motifDeRefus(new Error("tclk: amount is malformed: 15.0")) === "amount is malformed"
+    && motifDeRefus(new Error("tclk: offer id mismatch (expected 0xabc)")) === "offer id mismatch"
+    && motifDeRefus(new Error("tclk: unknown field on lock: nonce")) === "unknown field: nonce");
+  ok("assainissement : un message inconnu ne passe pas tel quel", motifDeRefus(new Error("tclk: weird <b>x</b> thing")) === "other reason");
+  const beaucoup = agreger(Array.from({ length: 30 }, (_, i) => ({ from: DA, sig: "s", nonce: String(i + 1), text: `tclk1 {"type":"t${i}x"}` })), Array(30).fill(true));
+  ok("bornes : trente types hors protocole tiennent en onze entrées", Object.keys(beaucoup.horsProtocole).length === 11 && beaucoup.horsProtocole["(other)"] === 20);
+  ok("bornes : les motifs aussi", beaucoup.motifsDeRefus.length === 13 && beaucoup.motifsDeRefus.at(-1)[1] === 18);
+
+  // ---- un accept sans identifiant de contrat : écarté, et l'on voit si quelqu'un y donne suite quand même
+  const sansContrat = champsDe(A1);
+  delete sansContrat.contract;
+  const suivi = agreger([
+    { from: DA, sig: "s", nonce: "1", text: encodeFrame(O1) },
+    { from: DB, sig: "s", nonce: "2", text: brut(sansContrat) },
+    { from: DA, sig: "s", nonce: "3", text: verrou(A1.contract) },
+  ], [true, true, true]);
+  ok("accept refusé : n'est pas un candidat", suivi.offresAvecAccept === 0 && suivi.acceptsRefuses === 1 && suivi.acceptsVus === 1);
+  ok("accept refusé : une suite qui nomme son contrat est vue", suivi.acceptsRefusesOffreVue === 1 && suivi.acceptsRefusesSuivis === 1);
+  const sansSuite = agreger([
+    { from: DA, sig: "s", nonce: "1", text: encodeFrame(O1) },
+    { from: DB, sig: "s", nonce: "2", text: brut(sansContrat) },
+  ], [true, true]);
+  ok("accept refusé : sans suite, zéro", sansSuite.acceptsRefusesOffreVue === 1 && sansSuite.acceptsRefusesSuivis === 0);
   // trois auteurs : A n émet que du 19 chiffres altéré (muet), B du 13 (lisible), C signe les deux
   const parA = agreger([
     { from: "did:A", sig: "s", nonce: "1788976440077681234", text: "x" },
@@ -342,6 +544,7 @@ export function selftest() {
   const d1 = { mesure_le: "2026-09-10T01:00:00Z", signatures: { trames_signees: 10, invisibles_a_un_lecteur_naif: 4, part_lisible_naivement: 60, auteurs_entierement_muets_pour_un_lecteur_naif: 2, auteurs_qui_signent: 5 }, commerce: { offres: 3, candidats_par_offre_moyen: 2, part_des_accepts_qui_aboutissent_a_un_verrou: 5 } };
   const p1 = pointDHistoire(d1);
   ok("historique : le point retient la part perdue, calculée et non recopiée", p1.part_perdue === 40 && p1.perdues === 4);
+  ok("historique : le commerce change de nom, la rupture se voit", p1.offres_conformes === 3 && p1.candidats_moyen_conformes === 2 && !("offres" in p1));
   ok("historique : une part illisible reste null, jamais zéro", pointDHistoire({ ...d1, signatures: { ...d1.signatures, part_lisible_naivement: null } }).part_perdue === null);
   ok("historique : le premier point crée la série", serieMiseAJour(null, p1).length === 1);
   ok("historique : un second instant s'ajoute", serieMiseAJour([p1], { ...p1, t: "2026-09-10T02:00:00Z" }).length === 2);
@@ -352,7 +555,8 @@ export function selftest() {
   ok("historique : une entrée nulle dans l'ancienne série ne casse rien", serieMiseAJour([null, p1], { ...p1, t: "2026-09-11T00:00:00Z" }).length === 2);
 
   const b = agreger([], []);
-  ok("agrégat : un anneau vide ne casse pas et n'invente rien", b.lignes === 0 && b.montant === null && b.candidatsMoyen === 0);
+  ok("agrégat : un anneau vide ne casse pas et n'invente rien", b.lignes === 0 && b.montant === null && b.candidatsMoyen === 0
+    && b.offres === 0 && b.tramesRefusees === 0 && b.motifsDeRefus.length === 0 && Object.keys(b.horsProtocole).length === 0);
 
   const echecs = cas.filter(([, r]) => !r);
   for (const [n, r] of cas) console.log(`  ${r ? "ok   " : "ECHEC"} ${n}`);
@@ -361,6 +565,16 @@ export function selftest() {
 }
 
 // ----- la mesure ---------------------------------------------------------------------------------------
+
+/** La version du décodeur réellement chargé : une mesure dit avec quel outil elle a été faite. */
+function versionDuDecodeur() {
+  try {
+    const url = new URL("../package.json", import.meta.resolve("@flop-labs/tclk"));
+    return "@flop-labs/tclk " + JSON.parse(readFileSync(url, "utf8")).version;
+  } catch {
+    return "@flop-labs/tclk, version illisible";
+  }
+}
 
 async function mesurer() {
   const { naif, exact } = await lireAnneau();
@@ -392,7 +606,10 @@ async function mesurer() {
       part_des_auteurs_muets: part(a.auteursMuets, a.auteursSignants),
     },
     commerce: {
+      regle: "Ne comptent que les trames que le décodeur officiel accepte, dont le champ from est l'auteur signé du message et dont la signature se vérifie : ce qu'un agent bâti sur la bibliothèque officielle voit réellement. Tout le reste est compté à part, dans refus, par raison.",
+      decodeur: versionDuDecodeur(),
       par_type_de_trame: a.parType,
+      types_hors_protocole: a.horsProtocole,
       offres: a.offres,
       offres_avec_au_moins_un_accept: a.offresAvecAccept,
       part_des_offres_acceptees: part(a.offresAvecAccept, a.offres),
@@ -410,6 +627,17 @@ async function mesurer() {
       part_verrouille_puis_quittance: part(a.verrouEtQuittance, a.verrouilles),
       note_livraison: "La livraison ne passe pas par une trame tclk1 : elle est écrite en clair dans le salon du deal, qui n'est pas public. Elle n'est donc pas mesurable depuis le tableau, et son absence ici ne veut pas dire qu'elle n'a pas lieu.",
       montant_flop: a.montant,
+      refus: {
+        trames_refusees: a.tramesRefusees,
+        motifs: a.motifsDeRefus,
+        trames_d_offre_refusees: a.tramesOffreRefusees,
+        offres_refusees: a.offresRefusees,
+        messages_en_forme_d_offre_hors_tclk1: a.horsTclkEnFormeDOffre,
+        accepts_refuses: a.acceptsRefuses,
+        part_des_accepts_refuses: part(a.acceptsRefuses, a.acceptsVus),
+        accepts_refuses_dont_l_offre_est_dans_la_fenetre: a.acceptsRefusesOffreVue,
+        accepts_refuses_suivis_d_une_trame_de_contrat: a.acceptsRefusesSuivis,
+      },
     },
   };
 
@@ -430,6 +658,7 @@ async function mesurer() {
   writeFileSync(HISTOIRE, JSON.stringify(serie) + "\n");
   console.log(`historique : ${serie.length} points, du ${serie[0]?.t?.slice(0, 16)} au ${serie[serie.length - 1]?.t?.slice(0, 16)}`);
   console.log(`observatoire : ${a.lignes} lignes, ${a.signees} signées, ${a.valides} valides, ${a.signees - a.lisiblesNaif} invisibles à un lecteur naïf`);
+  console.log(`décodeur ${versionDuDecodeur()} : ${a.offres} offres conformes, ${a.tramesRefusees} trames refusées, ${a.acceptsRefuses} accepts refusés sur ${a.acceptsVus}`);
   console.log(`écrit dans ${SORTIE}`);
   return donnees;
 }

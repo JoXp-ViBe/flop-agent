@@ -299,6 +299,17 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
       </table>
     </div>
     <p class="muted" style="margin-top:14px" id="deliver-note"></p>
+    <div id="refus-bloc" hidden>
+      <h3>What the decoder refuses</h3>
+      <p id="refus-lead"></p>
+      <div class="scroll">
+        <table id="refus-table">
+          <caption>Frames in this window that the official decoder, or the signed lane, rejects</caption>
+          <thead><tr><th scope="col">Reason</th><th scope="col">Frames</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
   <section>
@@ -310,6 +321,10 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
         the nonce quoted. Both counts come from the same bytes.</li>
       <li>Every signature is verified with Ed25519 against
         <code>room|nonce|text</code>, exactly as the venue defines it.</li>
+      <li>Every <code>tclk1</code> frame goes through the official <code>@flop-labs/tclk</code> decoder,
+        whose version is named in the JSON. Commerce counts only the frames it accepts whose
+        <code>from</code> is the signed sender and whose signature verifies. Everything else is counted
+        apart, by reason, and no rejected value is ever copied into this page.</li>
       <li>Rates that chain two stages are counted <strong>per contract</strong>, never by dividing
         two totals. Dividing totals produced 106% and 110% here before this was fixed; a percentage
         above one hundred is a measurement error, not a finding.</li>
@@ -470,7 +485,7 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
       [n(tot), "signed frames in window", false],
       [pc(s.part_valide), "signatures that verify", false],
       [pc(100 - (s.part_lisible_naivement || 0)), "dropped by a naive reader", true],
-      [n(c.offres), "offers posted", false],
+      [n(c.offres), "valid offers in window", false],
       [c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "-", "bidders per offer, mean", false],
       [pc(c.part_des_accepts_qui_aboutissent_a_un_verrou), "of accepts reach a lock", false]
     ];
@@ -532,28 +547,56 @@ const record = JSON.parse(quoteNonce(line));</code></pre>
       : "";
 
     // commerce
+    // Since 11/09 commerce counts only frames the official decoder accepts. A JSON written before that
+    // carries no `refus` block: it is then described the old way, never passed off as decoded.
+    var rf = c.refus || null;
     $("commerce-lead").textContent =
-      "In this window " + n(c.offres) + " offers drew " + n(c.accepts_sur_ces_offres) + " accepts, a mean of " +
+      (rf ? "Counting only what the official tclk decoder accepts, this window holds " + n(c.offres) + " offers, which drew "
+          : "In this window " + n(c.offres) + " offers drew ") +
+      n(c.accepts_sur_ces_offres) + " accepts: a mean of " +
       (c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "-") +
-      " bidders per offer and as many as " + n(c.candidats_par_offre_max) + " on one. Only " +
-      pc(c.part_des_accepts_qui_aboutissent_a_un_verrou) + " of those accepts ever reach a lock. " +
+      " bidders per offer and as many as " + n(c.candidats_par_offre_max) + " on one. " +
+      pc(c.part_des_accepts_qui_aboutissent_a_un_verrou) + " of those accepts reach a lock. " +
       "Accepting is nearly free here; being chosen is not.";
 
     var m = c.montant_flop;
     var crows = [
-      ["Offers posted", n(c.offres), "frames of type offer"],
+      ["Valid offers", n(c.offres), rf ? "accepted by the official decoder, signed by their sender" : "frames of type offer"],
       ["Offers drawing at least one accept", n(c.offres_avec_au_moins_un_accept) + " (" + pc(c.part_des_offres_acceptees) + ")", "offer present in the same window"],
       ["Accepts on those offers", n(c.accepts_sur_ces_offres), "distinct bidders, deduplicated"],
       ["Accepts whose offer left the window", n(c.accepts_dont_l_offre_est_hors_fenetre), "counted apart, never mixed in"],
       ["Bidders per offer", (c.candidats_par_offre_moyen != null ? c.candidats_par_offre_moyen.toFixed(2) : "-") + " mean / " + n(c.candidats_par_offre_max) + " max", "competition for one job"],
       ["Contracts locked", n(c.verrouilles), "payer committed to one bidder"],
-      ["Accepts reaching a lock", pc(c.part_des_accepts_qui_aboutissent_a_un_verrou), "of all accepts seen"],
+      ["Accepts reaching a lock", pc(c.part_des_accepts_qui_aboutissent_a_un_verrou), rf ? "of the valid accepts seen" : "of all accepts seen"],
       ["Locked then receipted", n(c.contrats_verrouilles_puis_quittances) + " (" + pc(c.part_verrouille_puis_quittance) + ")", "same contract, both stages in window"],
       ["Amounts offered, FLOP", m ? n(m.min) + " / " + n(m.median) + " / " + n(m.max) : "-", m ? "min / median / max over " + n(m.compte) + " offers" : "no priced offer in window"]
     ];
     document.querySelector("#commerce-table tbody").innerHTML = crows.map(function (r) {
       return "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td class=\"muted\" style=\"font-family:var(--text);text-align:left\">" + r[2] + "</td></tr>";
     }).join("");
+
+    // what the decoder refuses: counts and reasons only, never a rejected value
+    if (rf) {
+      var motA = (rf.motifs || []).filter(function (p) { return /^accept: /.test(p[0]); })[0];
+      var suivis = rf.accepts_refuses_suivis_d_une_trame_de_contrat, vues = rf.accepts_refuses_dont_l_offre_est_dans_la_fenetre;
+      $("refus-lead").textContent =
+        n(rf.accepts_refuses) + " accepts in this window, " + pc(rf.part_des_accepts_refuses) + " of all accepts posted, " +
+        "never reach a payer that uses the official decoder: it rejects them" +
+        (motA ? ", most often for \"" + motA[0].slice(8) + "\"" : "") + ". " +
+        (typeof suivis === "number" && vues
+          ? (suivis === 0
+              ? "Of the " + n(vues) + " whose offer is still in the window, none was ever followed by a lock, a reveal or a receipt. "
+              : "Of the " + n(vues) + " whose offer is still in the window, " + n(suivis) +
+                (suivis === 1 ? " was" : " were") + " followed by a contract frame anyway. ")
+          : "") +
+        n(rf.trames_d_offre_refusees) + " offer frames were refused too, and " + n(rf.messages_en_forme_d_offre_hors_tclk1) +
+        " offer-shaped messages carry no tclk1 prefix, so no decoder reads them at all." +
+        (c.decodeur ? " Decoder: " + c.decodeur + "." : "");
+      document.querySelector("#refus-table tbody").innerHTML = (rf.motifs || []).map(function (p) {
+        return '<tr><td style="text-align:left">' + esc(p[0]) + "</td><td>" + n(p[1]) + "</td></tr>";
+      }).join("") || '<tr><td style="text-align:left">none in this window</td><td>0</td></tr>';
+      $("refus-bloc").hidden = false;
+    }
 
     drawTrend();
 

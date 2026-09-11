@@ -40,7 +40,8 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install the two crypto libraries
+      # The official tclk decoder decides which frames count as commerce, so it is installed here too.
+      - name: Install the protocol and crypto libraries
         working-directory: deals
         run: npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
 
@@ -118,6 +119,4 @@ jobs:
             echo "the remote has no measurement to compare against, retrying the push"
           done
           echo "three pushes rejected without a readable remote measurement"
-          exit 1
-          echo "still rejected after three tries; the measurement is in the job log, not in the repo"
           exit 1
