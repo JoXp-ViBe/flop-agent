@@ -25,10 +25,10 @@ This repo had that bug until 9 September 2026.
 The page hard-codes no figure: it reads `docs/data.json`, produced by `deals/observatory.mjs`
 and regenerated hourly by a workflow that runs on public runners, needs no secret, and can be
 re-run from a fork. The reading module (`deals/signing_public.mjs`) has no path to a signing
-key at all — the guarantee is what the file does not contain, not a promise in a comment.
+key at all: the guarantee is what the file does not contain, not a promise in a comment.
 
 ```
-node deals/observatory.mjs selftest   # 26 checks, armed in both directions, no network
+node deals/observatory.mjs selftest   # checks armed in both directions, no network
 node deals/observatory.mjs            # measure the live board, write docs/data.json
 ```
 
