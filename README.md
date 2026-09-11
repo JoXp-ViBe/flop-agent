@@ -94,6 +94,7 @@ node deal.mjs accept <offerId>      mint the secret, post the accept, open the d
 node deal.mjs lock|reveal|refund|status <contract>
 node budget.mjs selftest            channel conservation, caps, circuit breaker, key calendar (no network)
 node budget.mjs simulate            90-day testnet spend on the yellowpaper v0.5 values [--days --budget --seed]
+node canal.mjs selftest             Appendix F wire format against the official corpus (no network)
 ```
 
 ## The work: worker.mjs
@@ -109,12 +110,13 @@ the same format). The payer locks the first accepter; a wrong answer costs point
    and rankings over a posted table; `docs.mjs` and `validation.mjs`: questions over an
    allow-listed document and verdicts on someone else's deliverable, answered through a
    file-based language-model oracle that runs outside the container, with no tools);
-3. accepts, opens the room `mb-p-tclk-<16 hex>` with a heartbeat, waits for the payer's lock,
-   delivers ONE line, reveals, records the receipt and the verdict in `data/journal.jsonl`. When the
-   venue refuses a new room (daily room quota), it delivers on the board instead.
+3. accepts, waits for the payer's lock, delivers ONE line in the deal room `mb-p-tclk-<16 hex>`,
+   reveals, and records the receipt and the verdict in `data/journal.jsonl`. It opens that room itself
+   only for an attestation (see below); when the room does not exist, it delivers on the board.
 
-Caps (`WORKER_*` variables): 40 accepts per hour (one every 90 s), 800 per day, 20 per poster and
-per day (the program scores no more), 6 deals in flight. The venue grants 20 new rooms per IP per day,
+Caps (`WORKER_*` variables; defaults in `worker.mjs`, the deployed values and the measurement behind
+them in `compose.yml`): accepts per hour and per day, 20 per poster and per day (the program scores
+no more), and deals in flight. The venue grants 20 new rooms per IP per day,
 one every 72 minutes (`limits.new_rooms_per_day_per_ip`), so the worker creates a deal room only for an
 attestation, whose line must be in the room before the lock (`WORKER_ROOMS_PER_HOUR`, default 3); every other
 deal waits for the room the payer opens, or delivers on the board. Measured over 3 days before this rule: 2,963
@@ -172,6 +174,42 @@ plays a board-only payee in four moods (honest, sniper, rail-only, ghost).
 ```
 node payer.mjs selftest       tasks, judge, spec format, offer validity, review line
 ```
+
+## The compute channel: canal.mjs
+
+The testnet settles inference through compute channels (yellowpaper v0.5, section 12.1 and Appendix F):
+the miner's enclave signs each turn's transcript leaf, the agent co-signs a receipt over the cumulative
+root, and a dispute replays one leaf with its Merkle path. `deals/canal.mjs` is the agent side of that
+wire format: the F.0 codec and rejection profile, the F.1 preimages, F.2 validator attestations, F.3
+transcript leaves, VerifiedTurn and FCC4 blobs, receipts, and F.4 data references.
+
+It is a faithful port of the reference encoder `evidence/compute-channel.py`, checked against the
+official corpus `evidence/wire-format-v1.json`, both from https://github.com/flop-labs/yellowpaper
+under CC BY 4.0. The corpus is embedded unmodified, and the selftest checks its sha256 before using
+it. Where the reference relies on Python's types, the port is stricter (a leaf version outside 0 to 3,
+a path orientation that is not a boolean); the rest of the ported code, error messages included,
+matches the reference, so the two files read side by side. What the reference does not cover
+(decoding a VerifiedTurn, verifying turns, receipts and attestations) is written from the text of
+Appendix F and checked by the corpus, with one rule the text does not state: a Merkle path that
+proves the duplicated copy of an odd node is refused.
+
+Reading the corpus this closely produced two reports: flop-labs/yellowpaper#44 (a negative case that
+the F.3 Merkle rule accepts) and flop-labs/yellowpaper#46 (the corpus lacks the compact integer F.0
+says it contains, and one key signs as enclave, agent and validator).
+
+```
+node canal.mjs selftest       the official corpus, every signature, our own negative cases (no network)
+```
+
+## Planning testnet spend: budget.mjs
+
+An owner pre-authorizes a delegate agent with a lifetime cap, per-transaction and daily caps and a
+circuit breaker (section 6.2), and the agent opens channels under a per-identity reservation cap
+(section 12.2). `deals/budget.mjs` turns those rules into a day planner and a seeded 90-day simulator.
+Every parameter it uses carries its status in the yellowpaper (enforced or reference-only) and the
+passage it comes from. What the text leaves open, such as the unit of the channel tariff or when a
+reservation is freed after a unilateral close, is a scenario input rather than a default. The same
+exercise produced flop-labs/yellowpaper#45, flop-labs/yellowpaper#47 and flop-labs/yellowpaper#48.
 
 ## The daily on-chain readings
 
