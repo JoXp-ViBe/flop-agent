@@ -58,7 +58,7 @@ export const REGLAGES = {
 };
 if (!REGLAGES.ecartMs && REGLAGES.maxHeure > 0) REGLAGES.ecartMs = Math.floor(3600_000 / REGLAGES.maxHeure);
 const ETAT = join(DATA_DIR, "worker.json");
-const SUSPENSIONS = join(DATA_DIR, "suspensions.json");   // { "familles": ["verification", …] } — écrit par le veilleur de santé (hôte) quand une famille échoue trop
+const SUSPENSIONS = join(DATA_DIR, "suspensions.json");   // { "familles": ["verification", …] }, écrit par le veilleur de santé (hôte) quand une famille échoue trop
 let suspCache = { ts: 0, familles: new Set() };
 
 // Salons neufs refusés par la venue (429 room-creation avec Retry-After ≈ 1 h, ou 400 « room limit reached »,
@@ -228,7 +228,7 @@ export async function planTables(spec) {
   if (!spec || !REGLAGES.familles.has("tables")) return null;
   // « verification » suspendue le 08/09/2026 : 3 réponses sur 3 justes d'après la matière (recomptées
   // indépendamment) mais jugées FAIL par un juge LLM aux motifs incohérents ; −5 chacune. WORKER_VERIFICATION=1 pour rouvrir.
-  // « verification » avait 3 FAIL sur 3 le 08/09 : les trois matières faisaient 8 000 caractères — la venue
+  // « verification » avait 3 FAIL sur 3 le 08/09 : les trois matières faisaient 8 000 caractères : la venue
   // coupe les notes à 8 192, la référence du posteur porte sur l'extrait ENTIER. Rouverte derrière le garde
   // de troncature ci-dessous (WORKER_VERIFICATION=0 pour la refermer) ; le veilleur de santé la suspend si elle échoue.
   const familles = process.env.WORKER_VERIFICATION === "0" ? ["inference", "census"] : ["inference", "census", "verification"];
@@ -248,12 +248,12 @@ export async function planTables(spec) {
 }
 
 /**
- * L'ask annonce « seq A–B » ; la note, coupée à 8 192 caractères par la venue, peut s'arrêter bien avant B
+ * L'ask annonce « seq A-B » ; la note, coupée à 8 192 caractères par la venue, peut s'arrêter bien avant B
  * (08/09 09:14 : plage de 925 seq, 90 lignes livrées, jugé faux). La longueur seule ne le voit pas quand les
  * lignes sont courtes : on exige que le dernier seq de la table approche la fin annoncée (marge 50 seq).
  */
 export function tableTronquee(ask, table, marge = 50) {
-  const plage = /seq\s+(\d+)\s*[–-]\s*(\d+)/.exec(ask ?? "");
+  const plage = /seq\s+(\d+)\s*[\u2013-]\s*(\d+)/.exec(ask ?? "");
   if (!plage || !table?.rows?.length) return false;
   const dernier = Number(table.rows[table.rows.length - 1].seq), fin = Number(plage[2]);
   return Number.isFinite(dernier) && Number.isFinite(fin) && dernier < fin - marge;
@@ -378,7 +378,7 @@ async function menerDeal(deal, signer, etat) {
     etat.stats.verrouilles += 1; deal.lockRef = lockRef; deal.lockedAt = Date.now();
     journal("lock_vu", { contract, ref: lockRef });
 
-    // 4. livrer une ligne, puis révéler = réclamer — dans un salon qui EXISTE. Mesuré le 08/09 04:00 :
+    // 4. livrer une ligne, puis révéler = réclamer, dans un salon qui EXISTE. Mesuré le 08/09 04:00 :
     // le verrou arrive sur le tableau 1 à 4 s après l'accept, le payeur ouvre le salon juste après ;
     // écrire avant lui, c'est créer le salon nous-mêmes, donc 429 quand notre quota du jour est épuisé
     // (6 deals verrouillés perdus). On attend le salon ; s'il ne vient pas, ce posteur travaille tout
@@ -410,7 +410,7 @@ async function menerDeal(deal, signer, etat) {
         const a = authenticate(rec);
         if (a.frame && a.frame.type === "receipt" && a.frame.contract === contract) outcome = a.frame.outcome;
         const m = /\b(PASS|FAIL)\b/.exec(rec.text ?? "");
-        if (!a.frame && m && /review|verdict|judge/i.test(rec.text ?? "")) verdict = m[1] + " — " + rec.text.slice(0, 200);
+        if (!a.frame && m && /review|verdict|judge/i.test(rec.text ?? "")) verdict = m[1] + " : " + rec.text.slice(0, 200);
       }
       if (deal.boardReceipt) outcome = deal.boardReceipt;
     }
@@ -604,8 +604,8 @@ function selftest() {
   ok("math insoluble → null", planifier(parseSpec("math | [difficulty 3/3] What is love? | done looks like: one line"), null) === null);
   for (const [nom, res] of cas) console.log(`  ${nom.padEnd(36)} ${res ? "reussi" : "ECHOUE"}`);
   const rows = (deb, n) => Array.from({ length: n }, (_, k) => ({ seq: String(deb + k), id: "0x" + k, payer: "P" + (k % 3), amount: "1", asset: "FLOP", rails: "paper", proto: "a2a", role: "payer" }));
-  ok("table tronquée : dernier seq loin de la fin annoncée", tableTronquee("Census over the excerpt seq 962441–963365 : how many offers", { header: ["seq"], rows: rows(962441, 90) }));
-  ok("table complète : dernier seq proche de la fin", !tableTronquee("seq 100–300 : how many offers", { header: ["seq"], rows: rows(100, 190) }));
+  ok("table tronquée : dernier seq loin de la fin annoncée", tableTronquee("Census over the excerpt seq 962441\u2013963365 : how many offers", { header: ["seq"], rows: rows(962441, 90) }));
+  ok("table complète : dernier seq proche de la fin", !tableTronquee("seq 100\u2013300 : how many offers", { header: ["seq"], rows: rows(100, 190) }));
   ok("sans plage annoncée : pas de verdict", !tableTronquee("how many offers", { header: ["seq"], rows: rows(1, 3) }));
   const avant = salonsBloquesJusqua;
   ok("refus de salon 429 → blocage noté", noterRefusSalon("post to mb-p-tclk-x: rate limited (retry-after 3714s): 429 429 room-creation quota", now) && salonsBloquesJusqua === now + 3714 * 1000);

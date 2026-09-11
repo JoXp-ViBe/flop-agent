@@ -10,14 +10,14 @@
 // tourner ailleurs que sur une instance locale.
 //
 // Le paquet npm 0.1.0 ne publie pas encore les aides de transcription du dépôt (fold, export) :
-// elles sont réécrites dans venue.mjs sur la même règle — un frame n'avance l'état que s'il est signé par
+// elles sont réécrites dans venue.mjs sur la même règle : un frame n'avance l'état que s'il est signé par
 // le did qu'il porte, dans le bon salon, à l'horodatage de la venue.
 //
 // Commandes (TECHNOCORE_URL, FLOP_SEED, FLOP_DATA) :
-//   node deal.mjs selftest                         frames, id de contrat, machine d'état — sans réseau
+//   node deal.mjs selftest                         frames, id de contrat, machine d'état, sans réseau
 //   node deal.mjs board [n]                        les n derniers frames du tableau tclk-offers, vérifiés
 //   node deal.mjs offer <amount> <asset> <rails> "<job>"   poster une offre (rôle payeur)
-//   node deal.mjs accept <offerId>                 accepter une offre du tableau (rôle payé) — mint le secret
+//   node deal.mjs accept <offerId>                 accepter une offre du tableau (rôle payé), mint le secret
 //   node deal.mjs lock <contract>                  (payeur) verrouiller sur le rail paper + frame lock
 //   node deal.mjs deliver <contract> "<texte>"     (payé) livrer le travail : un message signé dans le salon du deal
 //   node deal.mjs reveal <contract>                (payé) révéler le secret = réclamer
@@ -72,7 +72,7 @@ async function cmdOffer(amount, asset, rails, job) {
   });
   await post(signer, OFFER_ROOM, offer);
   saveDeal(offer.id, { role: "payer", offer, createdAt: now });
-  log(1, `offre postée dans /r/${OFFER_ROOM} — id ${offer.id}`);
+  log(1, `offre postée dans /r/${OFFER_ROOM}, id ${offer.id}`);
 }
 
 async function findOffer(offerId) {
@@ -99,7 +99,7 @@ async function cmdAccept(offerId) {
   const sn = stateNote(accept.contract);
   await notes.set(sn.ns, sn.key, stateNoteValue("accepted"), { ifAbsent: true });
   saveDeal(accept.contract, { role: "payee", offer, accept, preimage: lock.preimage, statement: lock.hash, room, createdAt: Date.now() });
-  log(2, `acceptée — contrat ${accept.contract}`);
+  log(2, `acceptée : contrat ${accept.contract}`);
   log("", `salon du deal /r/${room} · note d'état /kv/${sn.ns}/${sn.key}`);
   log("", `travail : ${typeof offer.job?.context === "string" ? offer.job.context.slice(0, 200) : JSON.stringify(offer.job ?? {})}`);
   log("", "le secret est dans data/deals (0600). Suite : attendre le lock du payeur, VÉRIFIER le rail, `deliver`, puis `reveal`.");
@@ -116,7 +116,7 @@ async function cmdLock(contract) {
   const sn = stateNote(contract);
   await notes.set(sn.ns, sn.key, stateNoteValue("locked", ref), { if: stateNoteValue("accepted") });
   const pn = paperNote(contract);
-  log(3, `lock posté — rail record /kv/${pn.ns}/${pn.key}`);
+  log(3, `lock posté, rail record /kv/${pn.ns}/${pn.key}`);
 }
 
 /** La livraison n'est pas un frame : un message signé, en clair, dans le salon du deal. */
@@ -269,6 +269,6 @@ try {
   }
 } catch (e) {
   journal("erreur", { cmd, detail: String(e.message ?? e).slice(0, 300) });
-  console.error(e instanceof VenueError ? `la venue a refusé — ${e.message}` : e);
+  console.error(e instanceof VenueError ? `la venue a refusé : ${e.message}` : e);
   process.exit(1);
 }

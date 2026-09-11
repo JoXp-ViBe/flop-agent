@@ -4,7 +4,7 @@
 // que le posteur nous confie. « Validators are the scarce role » (programme blockrewards) :
 // +6 par verdict juste, −6 par verdict faux, scoré comme calibration. Ces offres restent
 // ouvertes une dizaine de minutes et sont moins disputées : on peut se permettre de réfléchir
-// AVANT d'accepter — l'oracle (un modèle léger, sans outils) rend PASS ou FAIL avec sa phrase, et
+// AVANT d'accepter : l'oracle (un modèle léger, sans outils) rend PASS ou FAIL avec sa phrase, et
 // l'offre n'est acceptée que si ce verdict a une forme exacte. Un budget serré mesure la
 // justesse avant d'ouvrir plus grand.
 
@@ -33,17 +33,17 @@ export function promptValidation({ task, reference, deliverable }, documentExtra
     "DELIVERABLE: " + deliverable + "\n" +
     (documentExtrait ? "DOCUMENT EXCERPT (the cited source, to resolve the reference if it is described rather than stated):\n" + documentExtrait + "\n" : "") +
     "Reply on ONE line, exactly in one of these two forms and nothing else:\n" +
-    "PASS — <one sentence naming the exact match>\n" +
-    "FAIL — <one sentence naming the exact discrepancy>";
+    "PASS: <one sentence naming the exact match>\n" +
+    "FAIL: <one sentence naming the exact discrepancy>";
 }
 
-/** « PASS — phrase » / « FAIL — phrase » normalisé, ou null. */
+/** « PASS: phrase » / « FAIL: phrase » normalisé, ou null. */
 export function parseVerdict(texte) {
-  const m = /^\s*(PASS|FAIL)\s*[—–:-]+\s*(.+?)\s*$/is.exec(String(texte ?? "").split("\n").filter((l) => l.trim())[0] ?? "");
+  const m = /^\s*(PASS|FAIL)\s*[\u2014\u2013:-]+\s*(.+?)\s*$/is.exec(String(texte ?? "").split("\n").filter((l) => l.trim())[0] ?? "");
   if (!m) return null;
   const phrase = m[2].replace(/\s+/g, " ").trim();
   if (phrase.length < 8 || phrase.length > 300) return null;
-  return `${m[1].toUpperCase()} — ${phrase}`;
+  return `${m[1].toUpperCase()}: ${phrase}`;
 }
 
 const compteurs = { heure: "", nHeure: 0, jour: "", nJour: 0 };
@@ -80,8 +80,8 @@ export function selftest() {
   const v = analyserValidation(ask);
   ok("analyser : les trois champs", v && v.task.startsWith("From https://raw") && v.reference.startsWith("The exact number") && v.deliverable.endsWith("2. 10"));
   ok("analyser : autre forme → null", analyserValidation("Validate this: is 2+2=4?") === null);
-  ok("verdict PASS normalisé", parseVerdict("PASS — the deliverable states 10, the default of CHAT_MAX_WAIT.") === "PASS — the deliverable states 10, the default of CHAT_MAX_WAIT.");
-  ok("verdict FAIL avec tiret simple", parseVerdict("FAIL - deliverable says 12 where the reference is 10") === "FAIL — deliverable says 12 where the reference is 10");
+  ok("verdict PASS normalisé", parseVerdict("PASS \u2014 the deliverable states 10, the default of CHAT_MAX_WAIT.") === "PASS: the deliverable states 10, the default of CHAT_MAX_WAIT.");
+  ok("verdict FAIL avec tiret simple", parseVerdict("FAIL - deliverable says 12 where the reference is 10") === "FAIL: deliverable says 12 where the reference is 10");
   ok("verdict sans phrase → null", parseVerdict("PASS") === null);
   ok("verdict bavard → null", parseVerdict("Sure! The answer is PASS because…") === null);
   ok("prompt porte les trois champs", promptValidation(v, "").includes("REFERENCE ANSWER (private): The exact number") && promptValidation(v, "").includes("DELIVERABLE: 1."));

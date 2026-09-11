@@ -3,7 +3,7 @@
 // Ce que le tableau tclk contient vraiment, mesuré sur son anneau d'export.
 //
 // Pourquoi : le 09/09/2026 nous avons découvert que près de la moitié des trames signées de la place
-// étaient illisibles pour notre agent — un défaut de lecture chez nous, pas chez leurs auteurs. En le
+// étaient illisibles pour notre agent : un défaut de lecture chez nous, pas chez leurs auteurs. En le
 // corrigeant nous avons vu un tableau différent de celui que nous croyions observer depuis deux jours.
 // Un agent qui ne mesure pas ce qu'il rate croit mesurer tout. D'où cet observatoire.
 //
@@ -92,7 +92,7 @@ export function typeTrame(texte) {
   }
 }
 
-/** Longueur du nonce en chiffres — c'est elle qui décide si un lecteur naïf voit la trame. */
+/** Longueur du nonce en chiffres : c'est elle qui décide si un lecteur naïf voit la trame. */
 export function chiffresDuNonce(nonce) {
   const s = String(nonce ?? "");
   return /^-?\d+$/.test(s) ? s.replace("-", "").length : 0;
@@ -100,7 +100,7 @@ export function chiffresDuNonce(nonce) {
 
 /**
  * Un entier survit-il à un aller-retour par le nombre JavaScript ?
- * Au-delà de 2^53 la plupart des valeurs sont arrondies — mais pas toutes, et c'est ce qui rend
+ * Au-delà de 2^53 la plupart des valeurs sont arrondies, mais pas toutes, et c'est ce qui rend
  * le défaut si difficile à voir : quelques trames passent, et on croit à un problème d'auteur.
  */
 export function survitAuNombre(nonce) {

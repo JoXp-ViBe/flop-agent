@@ -46,7 +46,7 @@ export function publicKeyOfDid(did) {
  *
  * Mesuré le 09/09/2026 sur trois mille trames signées du tableau : les nonces de 2, 13 et 16
  * chiffres passaient tous, ceux de 19 chiffres échouaient 1 394 fois sur 1 400. Les six rescapés
- * sont ceux qui tombent pile sur une valeur représentable — à cette magnitude le pas des doubles
+ * sont ceux qui tombent pile sur une valeur représentable : à cette magnitude le pas des doubles
  * vaut 256, donc environ une valeur sur 233 survit, ce que 6/1400 prédit exactement.
  *
  * On met donc le nonce entre guillemets AVANT le parse. Le motif n'atteint que l'enveloppe : dans

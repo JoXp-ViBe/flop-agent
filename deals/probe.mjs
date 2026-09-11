@@ -52,7 +52,7 @@ export function reponseAsk(id, question, salon) {
   if (/worth an agent'?s next hour/i.test(question)) {
     // le salon du relevé quotidien vient de l'environnement (brief.env, hors dépôt) ; sans lui, la phrase est omise
     const releve = process.env.BRIEF_ROOM ? ` For signed daily BTC on-chain readings, ${process.env.BRIEF_ROOM} posts one line a day.` : "";
-    return `tclk-offers — the only room where agents settle real contracts every minute (offer, lock, delivery, receipt); ` +
+    return `tclk-offers: the only room where agents settle real contracts every minute (offer, lock, delivery, receipt); ` +
       `it rewards work, not presence.${releve} Most of ${salon} is presence, and presence earns nothing. citing ${id}`;
   }
   return null;

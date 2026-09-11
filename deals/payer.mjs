@@ -86,7 +86,7 @@ export function specTexte(t) {
   return `${t.famille} | [difficulty 1/3] ${t.ask} | reward tier 1/5 | done looks like: ${t.done} | ${PROTOCOLE}`;
 }
 
-/** Le jugement : exact après normalisation légère (espaces, casse, guillemets) — jamais un modèle. */
+/** Le jugement : exact après normalisation légère (espaces, casse, guillemets), jamais un modèle. */
 export function normaliser(s) {
   return String(s ?? "").replace(/^[\s"'`]+|[\s"'`.]+$/g, "").replace(/\s+/g, " ").toLowerCase();
 }
@@ -128,7 +128,7 @@ export function contientReponse(txt, reponse) {
 }
 
 export function ligneRevue(reviewId, contract, payee, verdict) {
-  return `review ${reviewId} contract ${contract.slice(0, 18)} payee ${payee.slice(-8)} ${verdict.pass ? "PASS 1" : "FAIL 0"} — ${verdict.motif}`;
+  return `review ${reviewId} contract ${contract.slice(0, 18)} payee ${payee.slice(-8)} ${verdict.pass ? "PASS 1" : "FAIL 0"}: ${verdict.motif}`;
 }
 
 // ----- état ----------------------------------------------------------------------------------------
@@ -211,13 +211,13 @@ export function lirePasseportTexte(html) {
 /**
  * Le passeport communautaire n'est PAS lisible en HTTP simple, mesure le 09/09/2026 : le site est une
  * application a rendu client qui sert son index (123 745 octets, identique au bit pres) pour TOUT chemin
- * sous /board/blockrewards/did/ — y compris pour un DID qu'il liste lui-meme, et y compris pour des noms
+ * sous /board/blockrewards/did/, y compris pour un DID qu'il liste lui-meme, et y compris pour des noms
  * de fichiers inventes. Notre lecture rendait donc toujours la meme chose, {passes:0, fails:1}, extraite du
  * texte generique : la meme valeur pour un agent a 658 reussites que pour un DID qui n'a jamais travaille.
  * Un temoin qui rend la meme chose sur le cas positif et le cas negatif ne discrimine rien.
  *
  * On ne lit donc plus rien : le classement se fait sur NOTRE experience du paye, puis l'ordre d'arrivee.
- * `lirePasseportTexte` est conservee et testee — elle est correcte, il lui manque une source. Rebrancher
+ * `lirePasseportTexte` est conservee et testee : elle est correcte, il lui manque une source. Rebrancher
  * ici le jour ou le programme expose une donnee lisible par un agent (API, JSON, ligne signee sur la place).
  */
 async function lirePasseport(etat, did) {
@@ -506,7 +506,7 @@ export function selftest() {
   const offer = construireOffre(signer, t, 1_800_000_000_000);
   ok("offre valide pour la bibliothèque (claimBy < refundAfter, rail paper, job a2a)", offer.type === "offer" && offer.claimByMs < offer.refundAfterMs && offer.rails.includes("paper") && offer.job.context === spec && offer.id.startsWith("0x"));
   const rev = ligneRevue("0xabc", "0x" + "1".repeat(64), "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S", { pass: true, motif: "exact match" });
-  ok("ligne de revue lisible par les workers (review … PASS 1 — …)", /^review 0xabc contract 0x1{16} payee z1xB22S PASS 1 — exact match$/.test(rev) || /^review 0xabc contract 0x1{16} payee [A-Za-z0-9]{8} PASS 1 — exact match$/.test(rev));
+  ok("ligne de revue lisible par les workers (review … PASS 1: …)", /^review 0xabc contract 0x1{16} payee z1xB22S PASS 1: exact match$/.test(rev) || /^review 0xabc contract 0x1{16} payee [A-Za-z0-9]{8} PASS 1: exact match$/.test(rev));
   // absorber : livraison et reveal, dans le salon ou sur le tableau, avec un vrai état de contrat
   const lock = generateHashLock();
   const payee = "did:key:z6MkkCR2AgQh8ecL2vMVVbZ7sL92hPpFmceoxpdKh7W1obrj";

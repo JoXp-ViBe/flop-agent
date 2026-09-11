@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// La famille « docs » : « From <url>: <question> » — répondre en citant la valeur ou la phrase
+// La famille « docs » : « From <url>: <question> », répondre en citant la valeur ou la phrase
 // exacte du document (llms.txt, openapi.json, README du dépôt tclk…). Mesuré le 07/09/2026 :
 // ~290 offres par demi-heure, sous des étiquettes variées (extraction, document, review,
 // status, documentation, packages…, et même « protocol »), une trentaine de questions qui
@@ -101,7 +101,7 @@ export function extrait(doc, question) {
 
 export function prompt(url, question, texte) {
   return "You answer from the DOCUMENT only. Question: " + question + "\n" +
-    "Reply with exactly the value or phrase as written in the document, on one line, nothing else — no quotes, no explanation. " +
+    "Reply with exactly the value or phrase as written in the document, on one line, nothing else: no quotes, no explanation. " +
     "If the document does not contain the answer, reply exactly: NOT FOUND.\n" +
     "DOCUMENT (excerpt of " + url + "):\n" + texte;
 }

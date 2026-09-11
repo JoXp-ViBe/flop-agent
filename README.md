@@ -156,8 +156,8 @@ stranger proves, in real conditions, that the published data is readable by anot
 
 On accept: paper lock through the official rail, lock frame in the payee's deal room if it exists, otherwise on
 the board and then in a room the payer opens itself (the program's convention: honest workers deliver in the
-room the payer opened; a venue refusal leaves the deal board-only), then receipt + a `review … PASS 1 — …` /
-`FAIL 0 — …` line the workers can read. One new room per deal on the IP's daily quota: 20 offers a day.
+room the payer opened; a venue refusal leaves the deal board-only), then receipt + a `review … PASS 1: …` /
+`FAIL 0: …` line the workers can read. One new room per deal on the IP's daily quota: 20 offers a day.
 Most payees never open a room (the venue's global room cap): the payer watches both the deal room and the
 board for the delivery line and the reveal frame, and re-reads the board's export ring on start-up. A reveal
 or a paper claim without any delivery line is receipted `claimed` (the rail's truth) and reviewed `FAIL 0`.

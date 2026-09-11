@@ -2,7 +2,7 @@
 //
 // La venue technocore.chat vue de Node : transport, notes, transcription vérifiée, état local
 // des contrats, journal. Une implémentation, partagée par deal.mjs (commandes à la main) et
-// worker.mjs (la boucle) — deux copies auraient dérivé (lecon : une copie en aval ne recoit
+// worker.mjs (la boucle) : deux copies auraient dérivé (lecon : une copie en aval ne recoit
 // pas la correction).
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from "node:fs";
@@ -39,7 +39,7 @@ export async function refusal(what, res) {
 }
 
 /**
- * Un 429 est une instruction (Retry-After), pas une erreur — mais une instruction qu'on ne suit
+ * Un 429 est une instruction (Retry-After), pas une erreur, mais une instruction qu'on ne suit
  * que si elle est courte. Mesuré le 08/09/2026 02:00 : le quota de 20 salons neufs par jour
  * épuisé, la venue demandait 3 017 s d'attente ; l'ancien code dormait 50 min DANS le deal,
  * six deals se sont empilés, plus aucun accept pendant l'heure. Au-delà de `maxWaitMs`, on lève
@@ -56,7 +56,7 @@ export async function req(url, init, what, { retries = 3, maxWaitMs = 60_000 } =
       try { corps = (await res.text()).split(String.fromCharCode(10)).find((l) => l.trim()) ?? ""; } catch { /* sans corps */ }
       throw new VenueError(`${what}: rate limited (retry-after ${Math.round(waitMs / 1000)}s)`, 429, corps.slice(0, 160));
     }
-    log("", `rate limited — waiting ${waitMs / 1000}s`);
+    log("", `rate limited, waiting ${waitMs / 1000}s`);
     await new Promise((r) => setTimeout(r, waitMs));
   }
 }
@@ -68,7 +68,7 @@ export async function req(url, init, what, { retries = 3, maxWaitMs = 60_000 } =
  * celle qui a été signée, et la trame est refusée à tort.
  *
  * Mesuré le 09/09/2026 sur 3 000 trames signées du tableau : longueurs 2, 13 et 16 chiffres
- * toutes vérifiées (1 600), longueur 19 refusée 1 394 fois sur 1 400 — soit 46 % des trames
+ * toutes vérifiées (1 600), longueur 19 refusée 1 394 fois sur 1 400, soit 46 % des trames
  * signées de la place ignorées par notre code, dont les huit accepts d'un payé qui nous
  * écrivait depuis le matin.
  *
@@ -131,7 +131,7 @@ export async function exportRoom(room) {
 /**
  * Le refus « nonce X is not greater than Y » : nos trois conteneurs partagent une clé et un
  * compteur de nonce, donc une requête lente peut être doublée par un frère et arriver périmée.
- * Mesuré une fois le 09/09/2026 à 10:41 — une offre payante perdue, écart de 837 ms.
+ * Mesuré une fois le 09/09/2026 à 10:41 : une offre payante perdue, écart de 837 ms.
  */
 export function nonceDepasse(err) {
   return err?.status === 400 && /\bnonce\b[\s\S]*\bis not greater than\b/.test(String(err?.body ?? ""));
@@ -139,7 +139,7 @@ export function nonceDepasse(err) {
 
 /**
  * Un message par ligne, voie signée (POST), signé sur le texte APRÈS balayage.
- * Rend {text, seq} — seq quand la venue le renvoie, sinon null.
+ * Rend {text, seq} ; seq quand la venue le renvoie, sinon null.
  * Un nonce doublé par un conteneur frère est resigné une fois : deux de suite diraient autre chose.
  */
 export async function postText(signer, room, text, { retries = 3 } = {}) {

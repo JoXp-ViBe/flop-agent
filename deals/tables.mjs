@@ -17,7 +17,7 @@ export function parseTable(text) {
 /**
  * La venue remplace les retours à la ligne par des espaces quand elle stocke une note (mesuré le
  * 08/09/2026 : une matière de 8 000 caractères sur UNE ligne). La table arrive donc aplatie :
- * « seq | id | payer | … | role 653637 | 0x7e89… | … | payer 653644 | … » — la dernière cellule
+ * « seq | id | payer | … | role 653637 | 0x7e89… | … | payer 653644 | … » : la dernière cellule
  * d'une ligne est collée au seq de la suivante par un espace. On la découpe sur ce motif.
  */
 export function parseAplati(text) {
@@ -136,7 +136,7 @@ export function repondreTable(ask, table) {
     for (const r of rows) cnt.set(r.payer, (cnt.get(r.payer) ?? 0) + 1);
     const b = meilleur(cnt);
     // tous à égalité (chaque payeur une fois) : le « premier alphabétique » du juge n'est pas le nôtre
-    // (jugé faux le 08/09 sur top=1VtbtPQX:1) — on ne répond pas sur une égalité générale
+    // (jugé faux le 08/09 sur top=1VtbtPQX:1) : on ne répond pas sur une égalité générale
     if (b && b[1] === 1 && cnt.size > 1) return null;
     return b ? `offers=${rows.length}; payers=${cnt.size}; top=${b[0]}:${b[1]}` : null;
   }

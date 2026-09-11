@@ -57,7 +57,7 @@ def cmd_status() -> int:
     dossier, tc, ident = contexte(exige_cle=False)
     print("venue      : %s (v%s)" % (tc.base, tc.agent_json().get("version", "?")))
     if tc.signeur is None:
-        print("identité   : AUCUNE (FLOP_SEED absent) — lecture seule")
+        print("identité   : AUCUNE (FLOP_SEED absent), lecture seule")
         return 0
     print("did        : %s" % ident.did)
     print("note       : /kv/%s/%s" % (tc.signeur.ns_note, tc.signeur.key_note))

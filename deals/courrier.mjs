@@ -362,7 +362,7 @@ function selftest() {
   ok("verifier : un brouillon fonde passe", verifier(bon, faits, message, R).ok);
   ok("verifier : un chiffre invente est refuse", verifier(bon.replace("8000 ms", "9000 ms"), faits, message, R).raison?.startsWith("chiffre absent"));
   ok("verifier : un identifiant invente est refuse", verifier(bon.replace("0x0b314c1e", "0xdeadbeef00"), faits, message, R).raison?.startsWith("identifiant absent"));
-  ok("verifier : un tiret long est refuse", verifier(bon.replace(":", " —"), faits, message, R).raison === "caractere non ASCII");
+  ok("verifier : un tiret long est refuse", verifier(bon.replace(":", " \u2014"), faits, message, R).raison === "caractere non ASCII");
   ok("verifier : un terme de la liste privee est refuse", verifier(bon + " Examplecorp says hi.", faits, message, R).raison === "mot interdit");
   ok("verifier : un terme generique est refuse", verifier(bon + " Ask the operator.", faits, message, R).raison === "mot interdit");
   ok("verifier : sans liste privee, rien ne part", verifier(bon, faits, message, { ...REGLAGES, interdits: null }).raison?.startsWith("liste privee"));

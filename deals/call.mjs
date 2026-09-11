@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Participer au marché de prédiction communautaire « overheard-calls » (règles publiques :
-// https://overheard-five.vercel.app/call.js — question : Flop Labs livre-t-il le mainnet avant le
+// https://overheard-five.vercel.app/call.js, question : Flop Labs livre-t-il le mainnet avant le
 // 31/03/2027 ?). Un « tap » donne 1 000 PAPER une seule fois par clé ; une « call » mise une part
 // de ce solde sur yes/no ; plusieurs mises par clé sont permises. PAPER n'a aucune valeur.
 // Tout passe par la voie signée de la venue : le `from` du frame est notre DID, la venue signe.
