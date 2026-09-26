@@ -301,8 +301,8 @@ function renderBoard() {
   head.textContent = ref ? `vs #${ref[0]}` : "1 h";
   head.title = ref ? `Change since sweep ${ref[0]} (${fTime(M.sweepTime(ref[0]))}), ${(pnl.n - ref[0]) * 5} minutes before the latest list` : "";
   body.innerHTML = rows.map((r) => {
-    const tie = r.tied > 1 ? `<span class="tie">shared by ${r.open ? "≥ " : ""}${r.tied}</span>` : "";
-    const medal = `<span class="medal${r.prize ? " prize" : ""}" title="${r.prize ? `Prize places ${r.prize[0]}${r.prize[1] !== r.prize[0] ? `–${r.prize[1]}` : ""}` : ""}">${r.rank}</span>`;
+    const tie = r.tied > 1 ? `<span class="tie">${r.open ? "≥" : ""}${r.tied} tied</span>` : "";
+    const medal = `<span class="medal${r.prize ? " prize" : ""}" title="${r.tied > 1 ? `Tied: ${r.open ? "at least " : ""}${r.tied} keys share places ${r.rank} to ${r.rank + r.tied - 1}${r.open ? "+" : ""}` : `Place ${r.rank}`}">${r.tied > 1 ? "T" : ""}${r.rank}</span>`;
     const ago = snapshotScoreAgo(r.did, 12);
     let delta;
     if (ago === undefined) delta = '<span class="muted">–</span>';

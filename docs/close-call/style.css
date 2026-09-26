@@ -166,7 +166,8 @@ table.board { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
 @media (max-width: 640px) {
   .kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
   .kpi { min-height: 96px; padding: 12px; }
-  .c-since, .c-spark, .board .copy, .tie { display: none; }
+  .c-since, .c-spark, .board .copy { display: none; }
+  .tie { font-size: 10px; }
   .board td, .board th { padding-left: 6px; padding-right: 6px; }
   .panel { padding: 14px; }
   .bar { flex-wrap: wrap; gap: 8px; }
