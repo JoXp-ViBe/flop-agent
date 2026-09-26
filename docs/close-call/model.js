@@ -33,7 +33,7 @@ export const CONTEST = Object.freeze({
 
 // One row per sweep. Column order is part of history.json's format (version 1).
 export const COLS = ["n", "t", "ref", "global", "lo", "hi", "mark", "owners", "rooms",
-  "open", "longs", "shorts", "settled", "void", "mints", "top1"];
+  "open", "longs", "shorts", "settled", "void", "mints", "top1", "top3"];
 const C = Object.fromEntries(COLS.map((c, i) => [c, i]));
 
 // A snapshot of the published top list is kept every SNAP sweeps (30 minutes), plus the latest.
@@ -128,7 +128,7 @@ export function emptyHistory() {
     latest: { pnl: null, positions: null, price: null, state: null, flow: null },
     dids: [],            // index for snapshots
     snapshots: [],       // [n, [[didIndex, score], ...]]
-    didStats: {},        // did -> [firstN, lastN, sweepsInTop, bestRank, bestScore]
+    didStats: {},        // did -> [firstN, lastN, sweepsInTop, bestRank, bestScore, sweepsAtFirst]
   };
 }
 
@@ -230,13 +230,18 @@ export function ingest(h, kind, rec) {
     const r = rowFor(h, m.n);
     r[C.mark] = num(m.mark);
     r[C.top1] = top.length ? num(top[0][1]) : null;
+    r[C.top3] = top.length >= 3 ? num(top[2][1]) : null;   // the score holding place 3: the prize line
     h.latest.pnl = { n: m.n, ts: rec.ts, mark: m.mark, top, file: m.file ?? null };
+    const places = placesOf(top);   // tie-aware: equal scores share a place
     top.forEach(([did, score], i) => {
       const s = Number(score);
-      const st = h.didStats[did] ?? [m.n, m.n, 0, i + 1, s];
+      const place = places[i].rank;
+      const st = h.didStats[did] ?? [m.n, m.n, 0, place, s, 0];
+      if (st.length < 6) st.push(0);
+      if (score === top[0][1]) st[5] += 1;   // at #1, ties included (they share the place)
       st[1] = m.n;
       st[2] += 1;
-      if (i + 1 < st[3]) st[3] = i + 1;
+      if (place < st[3]) st[3] = place;
       if (s > st[4]) st[4] = s;
       h.didStats[did] = st;
     });

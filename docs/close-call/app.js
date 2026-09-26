@@ -321,11 +321,33 @@ function renderBoard() {
     </tr>`;
   }).join("");
   const prizeRows = rows.filter((r) => r.prize);
+  const line = rows.find((r) => r.prize && r.prize[1] >= M.CONTEST.prizePlaces) ?? rows[Math.min(2, rows.length - 1)];
+  const lineTie = line.tied > 1 ? ` · ${line.open ? "at least " : ""}${line.tied} keys tied on it` : "";
+  $("prize-strip").innerHTML =
+    `<span>#1 score<br><b class="gold">${fSigned(rows[0].score)}</b></span>` +
+    `<span>Prize line (place ${M.CONTEST.prizePlaces})<br><b>${fSigned(line.score)}</b>${esc(lineTie)}</span>` +
+    `<span>Gap #1 to the line<br><b>${f2(rows[0].score - line.score)}</b> POLF</span>` +
+    `<span>Prize pool<br><b>${fCompact(M.CONTEST.prizePool)}</b> FLOP, split not published</span>`;
+  renderLeaders(rows);
   $("board-lede").textContent = `Top ${pnl.top.length} scores published by the referee at sweep ${fInt(pnl.n)}, marked to $${f2(pnl.mark)}.`;
   $("board-fine").textContent =
     `Score = what a key would hold at the mark price, minus the 10,000 POLF it started with, after fees. ` +
     `Places follow the rules: keys with equal scores share the places they span${prizeRows.some((r) => r.open) ? " (a tie that runs to the end of the published list may include more keys than shown)" : ""}. ` +
     `Places 1 to 3 share 1,000,000 FLOP after mainnet; the rules do not publish how it is split between places. Final scores use the last Hyperliquid trade before 10:00 UTC on 4 October.`;
+}
+
+function renderLeaders(current) {
+  const now = new Map(current.map((r) => [r.did, r]));
+  const list = Object.entries(H.didStats)
+    .sort((a, b) => b[1][2] - a[1][2] || (b[1][5] ?? 0) - (a[1][5] ?? 0) || a[1][3] - b[1][3])
+    .slice(0, 10);
+  $("lead-body").innerHTML = list.length ? list.map(([did, st]) => {
+    const r = now.get(did);
+    const nowCell = r ? `${r.tied > 1 ? "T" : ""}${r.rank}` : '<span class="muted">out</span>';
+    return `<tr><td><span class="key"><span class="id" title="${esc(did)}">${esc(shortDid(did))}</span><button class="copy" data-copy="${esc(did)}" aria-label="Copy the full key">copy</button></span></td>
+      <td class="num">${fInt(st[2])}</td><td class="num">${st[5] ? fInt(st[5]) : '<span class="muted">0</span>'}</td>
+      <td class="num">${st[3]}</td><td class="num">${nowCell}</td></tr>`;
+  }).join("") : '<tr><td colspan="5" class="muted">No scores published yet.</td></tr>';
 }
 
 function renderPositions() {
@@ -491,6 +513,16 @@ function renderCharts() {
     band: { name: "±5 % band", lo: c("lo"), hi: c("hi"), color: "rgba(0,180,216,0.07)", legend: "rgba(0,180,216,0.35)" },
     yFmt: (v) => `$${v.toFixed(0)}`, tipFmt: money,
   });
+  if (H.cols.includes("top3")) {
+    lineChart($("chart-win"), $("legend-win"), {
+      label: "Top score and prize line", x: xs, sweeps,
+      series: [
+        { name: "Prize line (place 3)", color: "#00B4D8", values: c("top3"), area: "rgba(0,180,216,0.10)" },
+        { name: "#1 score", color: "#F2C14E", values: c("top1"), width: 1.4 },
+      ],
+      yFmt: (v) => v.toFixed(0), tipFmt: (v) => `${fSigned(v)} POLF`,
+    });
+  }
   lineChart($("chart-sides"), $("legend-sides"), {
     label: "Keys long and short", x: xs, sweeps, zero: true,
     series: [

@@ -73,6 +73,7 @@
       </form>
     </div>
     <div class="find-result" id="find-result" aria-live="polite" hidden></div>
+    <div class="strip" id="prize-strip"></div>
     <div class="table-wrap">
       <table class="board" id="board-table">
         <thead>
@@ -90,6 +91,32 @@
     </div>
     <p class="fine" id="board-fine"></p>
   </section>
+
+  <div class="grid-2">
+    <section class="panel" aria-labelledby="lead-title">
+      <div class="panel-head"><div>
+        <h2 id="lead-title">Longest-running leaders</h2>
+        <p class="lede">Keys that stayed longest in the published top 25, over every sweep in the archive.</p>
+      </div></div>
+      <div class="table-wrap">
+        <table class="board small">
+          <thead><tr>
+            <th scope="col">Key</th><th scope="col" class="num">Sweeps in top 25</th>
+            <th scope="col" class="num">At #1</th><th scope="col" class="num">Best</th><th scope="col" class="num">Now</th>
+          </tr></thead>
+          <tbody id="lead-body"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="win-title">
+      <div class="panel-head"><div>
+        <h2 id="win-title">Scores at the top</h2>
+        <p class="lede">The #1 score and the prize line (the score holding place 3) at each sweep.</p>
+      </div></div>
+      <div class="chart" id="chart-win"></div>
+      <div class="legend" id="legend-win"></div>
+    </section>
+  </div>
 
   <div class="grid-2">
     <section class="panel" aria-labelledby="pos-title">
