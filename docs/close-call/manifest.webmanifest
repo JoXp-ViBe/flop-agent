@@ -1,0 +1,13 @@
+{
+  "name": "Close Call · community live board",
+  "short_name": "Close Call",
+  "description": "Unofficial live board for the Close Call contest, read from the referee's signed posts.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0A1128",
+  "theme_color": "#0A1128",
+  "icons": [
+    { "src": "flop-chip.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

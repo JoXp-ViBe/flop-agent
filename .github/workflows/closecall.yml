@@ -1,0 +1,83 @@
+# Archives the Close Call referee's five rooms and rebuilds the board's history.
+#
+# Technocore rooms are rings: old posts fall off. This job copies every referee post, byte for
+# byte, into docs/close-call/archive/, checks each Ed25519 signature against the referee's key,
+# and refuses to publish if one fails or if the two independent counts (keys minted in the flow
+# room, owners in the state room) disagree. It needs no secret: anyone can run it from a fork and
+# compare. The page itself reads the newest posts live, so a late run only delays the archive.
+
+name: closecall-board
+
+on:
+  schedule:
+    - cron: "4,24,44 * * * *"   # every 20 minutes, off the hour
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "deals/closecall_board.mjs"
+      - "docs/close-call/model.js"
+      - ".github/workflows/closecall.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: closecall-board
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the crypto library
+        working-directory: deals
+        run: npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
+
+      - name: Self-test before trusting the script
+        run: node deals/closecall_board.mjs selftest
+
+      - name: Archive and rebuild
+        run: node deals/closecall_board.mjs
+
+      - name: Refuse to lose history
+        run: |
+          node -e '
+            const fs = require("fs");
+            const now = JSON.parse(fs.readFileSync("docs/close-call/history.json", "utf8"));
+            let was = null;
+            try { was = JSON.parse(require("child_process").execSync("git show HEAD:docs/close-call/history.json", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })); } catch {}
+            if (!was) { console.log("no history in HEAD yet, first run"); process.exit(0); }
+            for (const k of Object.keys(was.sources)) {
+              if (now.sources[k].verified < was.sources[k].verified) { console.error(k + " lost posts: " + was.sources[k].verified + " -> " + now.sources[k].verified); process.exit(1); }
+            }
+            if (now.sweeps.length < was.sweeps.length) { console.error("sweeps lost: " + was.sweeps.length + " -> " + now.sweeps.length); process.exit(1); }
+            if (now.crossCheck.ok === false) { console.error("cross-check failed"); process.exit(1); }
+            console.log("history ok: " + was.sweeps.length + " -> " + now.sweeps.length + " sweeps");
+          '
+
+      - name: Commit if anything new
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/close-call/archive docs/close-call/history.json
+          if git diff --cached --quiet; then
+            echo "nothing new since the last run"
+            exit 0
+          fi
+          git commit -m "close call: archive referee posts"
+          # Only files under docs/close-call/ change here, so a rebase over a concurrent commit
+          # (the observatory writes other files) cannot conflict.
+          for attempt in 1 2 3; do
+            if git push; then echo "pushed on attempt $attempt"; exit 0; fi
+            git pull --rebase origin main
+          done
+          echo "three pushes rejected"
+          exit 1
