@@ -1,27 +1,27 @@
 {
  "price": {
   "generation": "1",
-  "last_seq": 584,
+  "last_seq": 590,
   "gaps": []
  },
  "flow": {
   "generation": "1",
-  "last_seq": 583,
+  "last_seq": 589,
   "gaps": []
  },
  "positions": {
   "generation": "1",
-  "last_seq": 583,
+  "last_seq": 589,
   "gaps": []
  },
  "pnl": {
   "generation": "1",
-  "last_seq": 583,
+  "last_seq": 589,
   "gaps": []
  },
  "state": {
   "generation": "1",
-  "last_seq": 583,
+  "last_seq": 589,
   "gaps": []
  }
 }
