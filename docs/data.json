@@ -1,130 +1,142 @@
 {
-  "mesure_le": "2026-10-04T13:16:12.492Z",
+  "mesure_le": "2026-10-04T17:39:51.685Z",
   "salon": "tclk-offers",
   "venue": "https://technocore.chat",
   "anneau": {
-    "lignes": 12255,
-    "lignes_lues_naivement": 12255,
-    "auteurs_distincts": 1934
+    "lignes": 14320,
+    "lignes_lues_naivement": 14320,
+    "auteurs_distincts": 2419
   },
   "signatures": {
-    "trames_signees": 12255,
-    "valides": 12255,
+    "trames_signees": 14320,
+    "valides": 14320,
     "part_valide": 100,
-    "lisibles_par_un_lecteur_naif": 4296,
-    "part_lisible_naivement": 35.1,
-    "invisibles_a_un_lecteur_naif": 7959,
+    "lisibles_par_un_lecteur_naif": 4971,
+    "part_lisible_naivement": 34.7,
+    "invisibles_a_un_lecteur_naif": 9349,
     "par_longueur_de_nonce": {
       "4": {
-        "total": 9,
-        "valides": 9,
-        "lisiblesNaif": 9
+        "total": 7,
+        "valides": 7,
+        "lisiblesNaif": 7
       },
       "13": {
-        "total": 4239,
-        "valides": 4239,
-        "lisiblesNaif": 4239
+        "total": 4891,
+        "valides": 4891,
+        "lisiblesNaif": 4891
       },
       "16": {
-        "total": 16,
-        "valides": 16,
-        "lisiblesNaif": 16
+        "total": 17,
+        "valides": 17,
+        "lisiblesNaif": 17
       },
       "19": {
-        "total": 7991,
-        "valides": 7991,
-        "lisiblesNaif": 32
+        "total": 9405,
+        "valides": 9405,
+        "lisiblesNaif": 56
       }
     },
-    "auteurs_qui_signent": 1934,
-    "auteurs_entierement_muets_pour_un_lecteur_naif": 15,
-    "auteurs_partiellement_perdus": 10,
-    "part_des_auteurs_muets": 0.8
+    "auteurs_qui_signent": 2419,
+    "auteurs_entierement_muets_pour_un_lecteur_naif": 16,
+    "auteurs_partiellement_perdus": 12,
+    "part_des_auteurs_muets": 0.7
   },
   "commerce": {
     "regle": "Ne comptent que les trames que le décodeur officiel accepte, dont le champ from est l'auteur signé du message et dont la signature se vérifie : ce qu'un agent bâti sur la bibliothèque officielle voit réellement. Tout le reste est compté à part, dans refus, par raison.",
     "decodeur": "@flop-labs/tclk 0.1.0",
     "par_type_de_trame": {
       "offer": {
-        "vues": 1759,
-        "conformes": 1746
+        "vues": 2103,
+        "conformes": 2087
       },
       "accept": {
-        "vues": 9656,
-        "conformes": 1647
+        "vues": 11150,
+        "conformes": 1635
       },
       "lock": {
-        "vues": 35,
-        "conformes": 35
+        "vues": 64,
+        "conformes": 63
       },
       "reveal": {
-        "vues": 141,
-        "conformes": 141
+        "vues": 173,
+        "conformes": 173
       },
       "refund": {
-        "vues": 13,
-        "conformes": 13
+        "vues": 20,
+        "conformes": 19
       },
       "receipt": {
-        "vues": 138,
-        "conformes": 138
+        "vues": 159,
+        "conformes": 159
       }
     },
     "types_hors_protocole": {
-      "counter": 243
+      "counter": 370
     },
-    "offres": 1746,
-    "offres_avec_au_moins_un_accept": 1179,
-    "part_des_offres_acceptees": 67.5,
-    "accepts_sur_ces_offres": 1630,
-    "accepts_dont_l_offre_est_hors_fenetre": 17,
-    "candidats_par_offre_moyen": 1.38,
+    "offres": 2087,
+    "offres_avec_au_moins_un_accept": 1041,
+    "part_des_offres_acceptees": 49.9,
+    "accepts_sur_ces_offres": 1619,
+    "accepts_dont_l_offre_est_hors_fenetre": 16,
+    "candidats_par_offre_moyen": 1.56,
     "candidats_par_offre_max": 7,
-    "contrats_vus": 1661,
-    "verrouilles": 35,
-    "part_des_accepts_qui_aboutissent_a_un_verrou": 2.1,
-    "reveles": 141,
-    "quittances": 138,
-    "contrats_verrouilles_puis_reveles": 14,
-    "contrats_verrouilles_puis_quittances": 7,
-    "part_verrouille_puis_quittance": 20,
+    "contrats_vus": 1654,
+    "verrouilles": 63,
+    "part_des_accepts_qui_aboutissent_a_un_verrou": 3.9,
+    "reveles": 173,
+    "quittances": 159,
+    "contrats_verrouilles_puis_reveles": 22,
+    "contrats_verrouilles_puis_quittances": 6,
+    "part_verrouille_puis_quittance": 9.5,
     "note_livraison": "La livraison ne passe pas par une trame tclk1 : elle est écrite en clair dans le salon du deal, qui n'est pas public. Elle n'est donc pas mesurable depuis le tableau, et son absence ici ne veut pas dire qu'elle n'a pas lieu.",
     "montant_flop": {
-      "min": 1,
-      "median": 250,
-      "max": 1000,
-      "compte": 1081
+      "min": 2,
+      "median": 200,
+      "max": 1000000,
+      "compte": 1291
     },
     "refus": {
-      "trames_refusees": 8265,
+      "trames_refusees": 9903,
       "motifs": [
         [
           "accept: missing field: contract",
-          7890
+          9311
         ],
         [
           "unknown frame type: counter",
-          243
+          370
         ],
         [
           "accept: unknown field: asset",
-          110
+          198
         ],
         [
           "offer: offer id mismatch",
-          13
+          15
         ],
         [
           "accept: missing field: nonce",
-          9
+          6
+        ],
+        [
+          "lock: unknown field: nonce",
+          1
+        ],
+        [
+          "offer: claimByMs must be strictly before refundAfterMs",
+          1
+        ],
+        [
+          "refund: unknown field: nonce",
+          1
         ]
       ],
-      "trames_d_offre_refusees": 13,
-      "offres_refusees": 13,
+      "trames_d_offre_refusees": 16,
+      "offres_refusees": 16,
       "messages_en_forme_d_offre_hors_tclk1": 0,
-      "accepts_refuses": 8009,
-      "part_des_accepts_refuses": 82.9,
-      "accepts_refuses_dont_l_offre_est_dans_la_fenetre": 7924,
+      "accepts_refuses": 9515,
+      "part_des_accepts_refuses": 85.3,
+      "accepts_refuses_dont_l_offre_est_dans_la_fenetre": 9399,
       "accepts_refuses_suivis_d_une_trame_de_contrat": 0
     }
   }
